@@ -1,0 +1,42 @@
+# Claude Code Debugging Options
+
+## Main Debugging Flags
+
+### --verbose
+The primary debugging flag for Claude Code CLI is `--verbose`. This flag enables verbose logging and shows the full turn-by-turn output, which is helpful for debugging in both print and interactive modes.
+
+Example usage:
+```
+claude-code --verbose "Explain this code"
+```
+
+When using verbose mode, Claude Code will display:
+- Connection status
+- Request timing
+- Network-related issues
+- Which files Claude is analyzing (prefixed with "Building context...")
+- Tool usage with parameters (prefixed with "Executing tool:")
+- Communication with Anthropic servers (prefixed with "API request:")
+
+Note that full API payloads are not shown for security reasons.
+
+### --include-partial-messages
+This flag can be used with `--print` and `--output-format=stream-json` to include partial streaming events in the output. This is useful for debugging streaming behavior.
+
+Example usage:
+```
+claude-code --print --output-format=stream-json --include-partial-messages "Generate a function"
+```
+
+### --permission-prompt-tool
+This flag allows you to specify an MCP tool to handle permission prompts in non-interactive mode, which can help debug permission-related issues.
+
+## Best Practices for Debugging
+
+1. Create a knowledge base of verbose output patterns and their solutions to accelerate future debugging.
+
+2. For production deployments using Claude Code in automated workflows, consider capturing verbose output in your monitoring systems.
+
+3. Enable verbose mode when Claude Code returns unexpected errors or fails silently, as it reveals the exact point of failure.
+
+Note: There is no specific `--debug` flag in Claude Code CLI. The `--verbose` flag is the main option for debugging purposes.

@@ -1,0 +1,73 @@
+# Output Formatting Test
+
+## Code Blocks
+Here's a code block in Python:
+```python
+def hello_world():
+    print("Hello, Claude!")
+    return True
+```
+
+Here's a code block in JavaScript:
+```javascript
+function helloWorld() {
+  console.log("Hello, Claude!");
+  return true;
+}
+```
+
+## Tables
+| Name  | Age | Occupation    |
+|-------|-----|---------------|
+| Alicia | 28  | Developer     |
+| Bob   | 34  | Designer      |
+| Carol | 42  | Project Lead  |
+
+## Lists
+### Ordered List
+1. First item
+2. Second item
+3. Third item
+
+### Unordered List
+- Apple
+- Banana
+- Cherry
+
+## Text Formatting
+**Bold text** and *italic text* and `inline code`
+
+## Links
+[Example Link](https://example.com)
+
+## Blockquotes
+> This is a blockquote.
+> It can span multiple lines.
+
+## Horizontal Rule
+---
+
+## Nested Elements
+* Main item 1
+  * Sub item 1.1
+  * Sub item 1.2
+* Main item 2
+  * Sub item 2.1
+    * Sub-sub item 2.1.1
+
+## JSON Example
+```json
+{
+  "name": "John Doe",
+  "age": 30,
+  "isEmployee": true,
+  "address": {
+    "street": "123 Main St",
+    "city": "Anytown"
+  },
+  "phoneNumbers": [
+    "555-1234",
+    "555-5678"
+  ]
+}
+```

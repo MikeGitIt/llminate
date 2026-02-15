@@ -1,0 +1,32 @@
+{"timestamp":"2025-09-11T06:45:46.393569Z","level":"DEBUG","fields":{"message":"Configurable logging initialized"},"target":"llminate"}
+{"timestamp":"2025-09-11T06:45:46.394007Z","level":"DEBUG","fields":{"message":"Config: default_level=Some(\"info\"), modules=None, stdout=false, file=true, json=true"},"target":"llminate"}
+{"timestamp":"2025-09-11T06:45:46.394013Z","level":"INFO","fields":{"message":"llminate debug logging started - session beginning"},"target":"llminate"}
+{"timestamp":"2025-09-11T06:45:46.394029Z","level":"DEBUG","fields":{"message":"Starting llminate with debug logging enabled"},"target":"llminate"}
+{"timestamp":"2025-09-11T06:45:46.394034Z","level":"DEBUG","fields":{"message":"CLI args: debug=false, print=false, prompt=None"},"target":"llminate"}
+{"timestamp":"2025-09-11T06:45:46.397526Z","level":"DEBUG","fields":{"message":"Starting authentication determination"},"target":"llminate::auth"}
+{"timestamp":"2025-09-11T06:45:46.397543Z","level":"DEBUG","fields":{"message":"Checking should_use_oauth (JavaScript checker53())"},"target":"llminate::auth"}
+{"timestamp":"2025-09-11T06:45:46.397548Z","level":"DEBUG","fields":{"message":"Checking if we should prefer OAuth over external auth sources"},"target":"llminate::auth"}
+{"timestamp":"2025-09-11T06:45:46.400193Z","level":"DEBUG","fields":{"message":"Found apiKeyHelper - preferring external auth"},"target":"llminate::auth"}
+{"timestamp":"2025-09-11T06:45:46.400199Z","level":"DEBUG","fields":{"message":"should_prefer_oauth_over_external_auth result: false"},"target":"llminate::auth"}
+{"timestamp":"2025-09-11T06:45:46.400205Z","level":"DEBUG","fields":{"message":"should_prefer_oauth_over_external_auth returned false - using API key path"},"target":"llminate::auth"}
+{"timestamp":"2025-09-11T06:45:46.400209Z","level":"DEBUG","fields":{"message":"should_use_oauth result: false"},"target":"llminate::auth"}
+{"timestamp":"2025-09-11T06:45:46.400214Z","level":"DEBUG","fields":{"message":"API key path selected - checking API key sources"},"target":"llminate::auth"}
+{"timestamp":"2025-09-11T06:45:46.400219Z","level":"INFO","fields":{"message":"✅ Using ANTHROPIC_API_KEY environment variable (***rOD-LgAA)"},"target":"llminate::auth"}
+{"timestamp":"2025-09-11T06:45:49.199899Z","level":"DEBUG","fields":{"message":"Starting authentication determination"},"target":"llminate::auth"}
+{"timestamp":"2025-09-11T06:45:49.200019Z","level":"DEBUG","fields":{"message":"Checking should_use_oauth (JavaScript checker53())"},"target":"llminate::auth"}
+{"timestamp":"2025-09-11T06:45:49.200037Z","level":"DEBUG","fields":{"message":"Checking if we should prefer OAuth over external auth sources"},"target":"llminate::auth"}
+{"timestamp":"2025-09-11T06:45:49.206151Z","level":"DEBUG","fields":{"message":"Found apiKeyHelper - preferring external auth"},"target":"llminate::auth"}
+{"timestamp":"2025-09-11T06:45:49.206174Z","level":"DEBUG","fields":{"message":"should_prefer_oauth_over_external_auth result: false"},"target":"llminate::auth"}
+{"timestamp":"2025-09-11T06:45:49.206187Z","level":"DEBUG","fields":{"message":"should_prefer_oauth_over_external_auth returned false - using API key path"},"target":"llminate::auth"}
+{"timestamp":"2025-09-11T06:45:49.206200Z","level":"DEBUG","fields":{"message":"should_use_oauth result: false"},"target":"llminate::auth"}
+{"timestamp":"2025-09-11T06:45:49.206211Z","level":"DEBUG","fields":{"message":"API key path selected - checking API key sources"},"target":"llminate::auth"}
+{"timestamp":"2025-09-11T06:45:49.206225Z","level":"INFO","fields":{"message":"✅ Using ANTHROPIC_API_KEY environment variable (***rOD-LgAA)"},"target":"llminate::auth"}
+{"timestamp":"2025-09-11T06:45:49.214859Z","level":"DEBUG","fields":{"message":"starting new connection: https://api.anthropic.com/","log.target":"reqwest::connect","log.module_path":"reqwest::connect","log.file":"/Users/mickillah/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/reqwest-0.11.27/src/connect.rs","log.line":449},"target":"reqwest::connect"}
+{"timestamp":"2025-09-11T06:45:49.215025Z","level":"DEBUG","fields":{"message":"resolving host=\"api.anthropic.com\""},"target":"hyper::client::connect::dns"}
+{"timestamp":"2025-09-11T06:45:49.218095Z","level":"DEBUG","fields":{"message":"connecting to [2607:6bc0::10]:443"},"target":"hyper::client::connect::http"}
+{"timestamp":"2025-09-11T06:45:49.241246Z","level":"DEBUG","fields":{"message":"connected to [2607:6bc0::10]:443"},"target":"hyper::client::connect::http"}
+{"timestamp":"2025-09-11T06:45:49.300138Z","level":"DEBUG","fields":{"message":"flushed 31755 bytes"},"target":"hyper::proto::h1::io"}
+{"timestamp":"2025-09-11T06:45:49.450108Z","level":"DEBUG","fields":{"message":"parsed 14 headers"},"target":"hyper::proto::h1::io"}
+{"timestamp":"2025-09-11T06:45:49.450124Z","level":"DEBUG","fields":{"message":"incoming body is content-length (234 bytes)"},"target":"hyper::proto::h1::conn"}
+{"timestamp":"2025-09-11T06:45:49.450318Z","level":"DEBUG","fields":{"message":"incoming body completed"},"target":"hyper::proto::h1::conn"}
+{"timestamp":"2025-09-11T06:45:49.450354Z","level":"DEBUG","fields":{"message":"pooling idle connection for (\"https\", api.anthropic.com)"},"target":"hyper::client::pool"}

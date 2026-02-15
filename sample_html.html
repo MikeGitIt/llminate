@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sample HTML Document</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            border: 1px solid #ddd;
+            padding: 15px;
+            border-radius: 5px;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        .highlight {
+            background-color: #ffffcc;
+            padding: 2px 5px;
+        }
+        code {
+            background-color: #f5f5f5;
+            padding: 2px 4px;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <h1>Sample HTML Document</h1>
+    
+    <div class="container">
+        <h2>HTML Elements Example</h2>
+        
+        <p>This is a paragraph with <strong>bold text</strong> and <em>italic text</em>.</p>
+        
+        <p>This is a paragraph with <span class="highlight">highlighted text</span> and <code>inline code</code>.</p>
+        
+        <h3>Unordered List</h3>
+        <ul>
+            <li>Item 1</li>
+            <li>Item 2
+                <ul>
+                    <li>Subitem 2.1</li>
+                    <li>Subitem 2.2</li>
+                </ul>
+            </li>
+            <li>Item 3</li>
+        </ul>
+        
+        <h3>Ordered List</h3>
+        <ol>
+            <li>First item</li>
+            <li>Second item</li>
+            <li>Third item</li>
+        </ol>
+        
+        <h3>Table Example</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Age</th>
+                    <th>Occupation</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>John</td>
+                    <td>30</td>
+                    <td>Developer</td>
+                </tr>
+                <tr>
+                    <td>Jane</td>
+                    <td>25</td>
+                    <td>Designer</td>
+                </tr>
+                <tr>
+                    <td>Bob</td>
+                    <td>35</td>
+                    <td>Manager</td>
+                </tr>
+            </tbody>
+        </table>
+        
+        <h3>Form Example</h3>
+        <form>
+            <div>
+                <label for="name">Name:</label>
+                <input type="text" id="name" name="name">
+            </div>
+            <div style="margin-top: 10px;">
+                <label for="email">Email:</label>
+                <input type="email" id="email" name="email">
+            </div>
+            <div style="margin-top: 10px;">
+                <label for="message">Message:</label>
+                <textarea id="message" name="message" rows="4" cols="50"></textarea>
+            </div>
+            <div style="margin-top: 10px;">
+                <button type="submit">Submit</button>
+            </div>
+        </form>
+    </div>
+</body>
+</html>

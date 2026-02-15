@@ -1,0 +1,30 @@
+{
+  "users": [
+    {
+      "id": 1,
+      "name": "John Doe",
+      "email": "john@example.com",
+      "roles": ["admin", "user"],
+      "active": true
+    },
+    {
+      "id": 2,
+      "name": "Jane Smith",
+      "email": "jane@example.com",
+      "roles": ["user"],
+      "active": false
+    },
+    {
+      "id": 3,
+      "name": "Bob Johnson",
+      "email": "bob@example.com",
+      "roles": ["user", "editor"],
+      "active": true
+    }
+  ],
+  "settings": {
+    "theme": "dark",
+    "notifications": true,
+    "language": "en-US"
+  }
+}

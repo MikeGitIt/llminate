@@ -1,0 +1,1022 @@
+use crate::error::{Error, Result};
+use anyhow::Context;
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use tokio::fs;
+use tracing::{debug, info, error};
+
+/// Authentication methods supported
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AuthMethod {
+    /// Direct API key authentication
+    ApiKey(String),
+    /// Claude.ai OAuth authentication (for Max subscribers)  
+    ClaudeAiOauth(ClaudeAiOauth),
+}
+
+/// Claude.ai OAuth authentication details (matches JavaScript UZ function)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeAiOauth {
+    #[serde(rename = "accessToken")]
+    pub access_token: String,
+    #[serde(rename = "refreshToken")]
+    pub refresh_token: String,
+    #[serde(rename = "expiresAt", skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<i64>,
+    pub scopes: Vec<String>,
+    #[serde(rename = "subscriptionType", skip_serializing_if = "Option::is_none")]
+    pub subscription_type: Option<String>,
+}
+
+/// Configuration file structure matching JavaScript
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthConfig {
+    #[serde(rename = "primaryApiKey", skip_serializing_if = "Option::is_none")]
+    pub primary_api_key: Option<String>,
+    #[serde(rename = "apiKeyHelper", skip_serializing_if = "Option::is_none")]
+    pub api_key_helper: Option<String>,
+    #[serde(rename = "customApiKeyResponses", skip_serializing_if = "Option::is_none")]
+    pub custom_api_key_responses: Option<CustomApiKeyResponses>,
+    #[serde(rename = "oauth", skip_serializing_if = "Option::is_none")]
+    pub oauth: Option<ClaudeAiOauth>,
+}
+
+/// Custom API key response tracking (JavaScript YA function)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomApiKeyResponses {
+    #[serde(default)]
+    pub approved: Vec<String>,
+    #[serde(default)]
+    pub rejected: Vec<String>,
+}
+
+/// Authentication source result (JavaScript QX function return type)
+#[derive(Debug, Clone)]
+pub struct AuthSource {
+    pub key: Option<String>,
+    pub source: String,
+}
+
+/// Authentication manager implementing complete JavaScript flow
+pub struct AuthManager {
+    config_path: PathBuf,
+    config_cache: Option<(AuthConfig, std::time::SystemTime)>,
+    keychain_cache: Option<(Option<ClaudeAiOauth>, std::time::SystemTime)>,
+}
+
+impl AuthManager {
+    /// Create new authentication manager
+    pub fn new() -> Result<Self> {
+        let config_path = Self::get_config_file_path()?;
+        debug!("AuthManager created with config path: {:?}", config_path);
+        
+        Ok(Self {
+            config_path,
+            config_cache: None,
+            keychain_cache: None,
+        })
+    }
+
+    /// Get config file path with exact JavaScript precedence (wX function)
+    fn get_config_file_path() -> Result<PathBuf> {
+        let config_dir = Self::get_config_directory()?;
+        let primary_config = config_dir.join(".config.json");
+        
+        if primary_config.exists() {
+            debug!("Using primary config file: {:?}", primary_config);
+            return Ok(primary_config);
+        }
+        
+        // Fallback logic matching JavaScript
+        if let Ok(claude_config_dir) = std::env::var("CLAUDE_CONFIG_DIR") {
+            let fallback = PathBuf::from(claude_config_dir).join(".claude.json");
+            debug!("Using CLAUDE_CONFIG_DIR fallback: {:?}", fallback);
+            Ok(fallback)
+        } else if let Some(home_dir) = dirs::home_dir() {
+            let fallback = home_dir.join(".claude.json");
+            debug!("Using home directory fallback: {:?}", fallback);
+            Ok(fallback)
+        } else {
+            Err(Error::Config("Cannot determine home directory for config file".to_string()))
+        }
+    }
+
+    /// Get config directory with exact JavaScript precedence (checker64 function)
+    fn get_config_directory() -> Result<PathBuf> {
+        if let Ok(claude_config_dir) = std::env::var("CLAUDE_CONFIG_DIR") {
+            return Ok(PathBuf::from(claude_config_dir));
+        }
+        
+        if let Ok(xdg_config_home) = std::env::var("XDG_CONFIG_HOME") {
+            return Ok(PathBuf::from(xdg_config_home).join("claude"));
+        }
+        
+        if let Some(home_dir) = dirs::home_dir() {
+            return Ok(home_dir.join(".claude"));
+        }
+        
+        Err(Error::Config("Cannot determine config directory".to_string()))
+    }
+
+    /// Read and cache configuration file (JavaScript helperFunc5 equivalent)
+    async fn get_config(&mut self) -> Result<AuthConfig> {
+        // Check cache validity
+        if let Some((ref config, cached_time)) = self.config_cache {
+            if let Ok(metadata) = fs::metadata(&self.config_path).await {
+                if let Ok(modified) = metadata.modified() {
+                    if modified <= cached_time {
+                        debug!("Using cached config");
+                        return Ok(config.clone());
+                    }
+                }
+            }
+        }
+
+        debug!("Reading config file: {:?}", self.config_path);
+        
+        if !self.config_path.exists() {
+            debug!("Config file does not exist, using defaults");
+            let default_config = AuthConfig {
+                primary_api_key: None,
+                api_key_helper: None,
+                custom_api_key_responses: None,
+                oauth: None,
+            };
+            return Ok(default_config);
+        }
+        
+        let content = fs::read_to_string(&self.config_path).await
+            .context("Failed to read config file")?;
+            
+        let config: AuthConfig = serde_json::from_str(&content)
+            .context("Failed to parse config file")?;
+            
+        // Update cache
+        if let Ok(metadata) = fs::metadata(&self.config_path).await {
+            if let Ok(modified) = metadata.modified() {
+                self.config_cache = Some((config.clone(), modified));
+            }
+        }
+        
+        debug!("Loaded config: has_primary_api_key={}, has_api_key_helper={}, has_oauth={}", 
+               config.primary_api_key.is_some(),
+               config.api_key_helper.is_some(),
+               config.oauth.is_some());
+        
+        Ok(config)
+    }
+
+    /// Get keychain service name (JavaScript implementation)
+    fn get_keychain_service_name() -> Result<String> {
+        Ok("Claude Code-credentials".to_string())
+    }
+
+    /// Read Claude.ai OAuth tokens from macOS keychain (JavaScript UZ function)
+    async fn get_claude_ai_oauth(&mut self) -> Result<Option<ClaudeAiOauth>> {
+        // Check cache (1 minute TTL)
+        if let Some((ref oauth, cached_time)) = self.keychain_cache {
+            if cached_time.elapsed().unwrap_or(std::time::Duration::from_secs(3600)) < std::time::Duration::from_secs(60) {
+                debug!("Using cached keychain data");
+                return Ok(oauth.clone());
+            }
+        }
+
+        debug!("Reading OAuth tokens from keychain");
+        
+        if !cfg!(target_os = "macos") {
+            debug!("Not on macOS, no keychain access");
+            return Ok(None);
+        }
+        
+        let service_name = Self::get_keychain_service_name()?;
+        
+        let username = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+        let output = tokio::process::Command::new("security")
+            .args(&[
+                "find-generic-password",
+                "-a", &username,
+                "-w",
+                "-s", &service_name
+            ])
+            .output()
+            .await
+            .context("Failed to execute security command")?;
+            
+        if !output.status.success() {
+            debug!("No keychain entry found for Claude Desktop");
+            self.keychain_cache = Some((None, std::time::SystemTime::now()));
+            return Ok(None);
+        }
+        
+        let keychain_data_raw = String::from_utf8(output.stdout)
+            .context("Invalid UTF-8 in keychain data")?;
+        let keychain_data = keychain_data_raw.trim();
+            
+        if keychain_data.is_empty() {
+            debug!("Empty keychain data");
+            self.keychain_cache = Some((None, std::time::SystemTime::now()));
+            return Ok(None);
+        }
+        
+        // Parse JSON from keychain - look for claudeAiOauth field
+        match serde_json::from_str::<serde_json::Value>(keychain_data) {
+            Ok(json) => {
+                if let Some(oauth_data) = json.get("claudeAiOauth") {
+                    match serde_json::from_value::<ClaudeAiOauth>(oauth_data.clone()) {
+                        Ok(oauth) => {
+                            debug!("Successfully parsed OAuth tokens from keychain - scopes: {:?}", oauth.scopes);
+                            self.keychain_cache = Some((Some(oauth.clone()), std::time::SystemTime::now()));
+                            Ok(Some(oauth))
+                        }
+                        Err(e) => {
+                            debug!("Failed to parse OAuth from keychain JSON: {}", e);
+                            self.keychain_cache = Some((None, std::time::SystemTime::now()));
+                            Ok(None)
+                        }
+                    }
+                } else {
+                    debug!("No claudeAiOauth field in keychain data");
+                    self.keychain_cache = Some((None, std::time::SystemTime::now()));
+                    Ok(None)
+                }
+            }
+            Err(e) => {
+                debug!("Failed to parse keychain JSON: {}", e);
+                self.keychain_cache = Some((None, std::time::SystemTime::now()));
+                Ok(None)
+            }
+        }
+    }
+
+    /// Execute apiKeyHelper command (JavaScript MS function)
+    async fn execute_api_key_helper(&mut self, helper_command: &str) -> Result<Option<String>> {
+        debug!("Executing apiKeyHelper: {}", helper_command);
+        
+        match tokio::process::Command::new("sh")
+            .arg("-c")
+            .arg(helper_command)
+            .output()
+            .await
+        {
+            Ok(output) => {
+                if output.status.success() {
+                    match String::from_utf8(output.stdout) {
+                        Ok(result) => {
+                            let trimmed = result.trim();
+                            if !trimmed.is_empty() {
+                                debug!("apiKeyHelper returned valid key");
+                                Ok(Some(trimmed.to_string()))
+                            } else {
+                                debug!("apiKeyHelper returned empty output");
+                                // JavaScript MS() returns " " (space) when empty
+                                Ok(Some(" ".to_string()))
+                            }
+                        }
+                        Err(_) => {
+                            debug!("apiKeyHelper returned invalid UTF-8");
+                            // JavaScript MS() returns " " (space) on error
+                            Ok(Some(" ".to_string()))
+                        }
+                    }
+                } else {
+                    debug!("apiKeyHelper execution failed with status: {}", output.status);
+                    // JavaScript MS() returns " " (space) on failure
+                    Ok(Some(" ".to_string()))
+                }
+            }
+            Err(e) => {
+                debug!("Failed to execute apiKeyHelper: {}", e);
+                // JavaScript MS() returns " " (space) on execution error
+                Ok(Some(" ".to_string()))
+            }
+        }
+    }
+
+    /// Check if API key is approved by user (JavaScript YA function)
+    async fn is_api_key_approved(&mut self, api_key: &str) -> Result<bool> {
+        let config = self.get_config().await?;
+        
+        if let Some(responses) = config.custom_api_key_responses {
+            // Check last 20 characters of API key (JavaScript VJ function)
+            let suffix = if api_key.len() > 20 { 
+                &api_key[api_key.len() - 20..] 
+            } else { 
+                api_key 
+            };
+            
+            let is_approved = responses.approved.contains(&suffix.to_string());
+            debug!("API key approval check: suffix={}, approved={}", suffix, is_approved);
+            return Ok(is_approved);
+        }
+        
+        debug!("No customApiKeyResponses found, considering not approved");
+        Ok(false)
+    }
+
+    /// Check if user wants to use API key (JavaScript func27 function)  
+    async fn should_use_env_api_key(&mut self) -> Result<bool> {
+        if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
+            if !api_key.is_empty() {
+                // Check if user has approved this API key
+                return self.is_api_key_approved(&api_key).await;
+            }
+        }
+        Ok(false)
+    }
+
+    /// Get authentication source with priority (JavaScript QX function)
+    async fn get_auth_source(&mut self) -> Result<AuthSource> {
+        debug!("Determining authentication source");
+        
+        // Priority 1: Environment API key with user approval
+        if self.should_use_env_api_key().await? {
+            if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
+                if !api_key.is_empty() {
+                    debug!("Using approved ANTHROPIC_API_KEY");
+                    return Ok(AuthSource {
+                        key: Some(api_key),
+                        source: "ANTHROPIC_API_KEY".to_string(),
+                    });
+                }
+            }
+        }
+
+        // Priority 2: Environment API key without approval (still valid for QX)
+        if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
+            if !api_key.is_empty() && !self.is_api_key_approved(&api_key).await? {
+                debug!("Found unapproved ANTHROPIC_API_KEY");
+                return Ok(AuthSource {
+                    key: Some(api_key),
+                    source: "ANTHROPIC_API_KEY".to_string(),
+                });
+            }
+        }
+
+        // Priority 3: apiKeyHelper
+        let config = self.get_config().await?;
+        if let Some(helper_command) = config.api_key_helper {
+            if let Some(result) = self.execute_api_key_helper(&helper_command).await? {
+                debug!("Using apiKeyHelper result");
+                return Ok(AuthSource {
+                    key: Some(result),
+                    source: "apiKeyHelper".to_string(),
+                });
+            }
+        }
+
+        // Priority 4: Raw keychain data (for /login managed keys)
+        if cfg!(target_os = "macos") {
+            let service_name = Self::get_keychain_service_name()?;
+            let username = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+            
+            if let Ok(output) = tokio::process::Command::new("security")
+                .args(&[
+                    "find-generic-password",
+                    "-a", &username,
+                    "-w", 
+                    "-s", &service_name
+                ])
+                .output()
+                .await
+            {
+                if output.status.success() {
+                    let keychain_data = String::from_utf8_lossy(&output.stdout);
+                    let trimmed = keychain_data.trim();
+                    if !trimmed.is_empty() {
+                        // Try to parse as JSON first (OAuth), if fails treat as raw key
+                        if serde_json::from_str::<serde_json::Value>(trimmed).is_err() {
+                            debug!("Using raw keychain data as API key");
+                            return Ok(AuthSource {
+                                key: Some(trimmed.to_string()),
+                                source: "keychain".to_string(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Priority 5: OAuth tokens
+        if let Some(oauth) = self.get_claude_ai_oauth().await? {
+            debug!("Using OAuth tokens");
+            return Ok(AuthSource {
+                key: Some(oauth.access_token),
+                source: "oauth".to_string(),
+            });
+        }
+
+        // Priority 6: primaryApiKey from config
+        if let Some(api_key) = config.primary_api_key {
+            debug!("Using primaryApiKey from config");
+            return Ok(AuthSource {
+                key: Some(api_key),
+                source: "config".to_string(),
+            });
+        }
+
+        debug!("No authentication source found");
+        Ok(AuthSource {
+            key: None,
+            source: "none".to_string(),
+        })
+    }
+
+    /// Check if OAuth should be preferred (JavaScript qS function)
+    async fn should_prefer_oauth(&mut self) -> Result<bool> {
+        debug!("Checking if OAuth should be preferred");
+        
+        // JavaScript qS() logic:
+        // return !(input20325 || next2170 || input20347 === "ANTHROPIC_API_KEY" || input20347 === "apiKeyHelper");
+        
+        // input20325: Bedrock/Vertex usage
+        if std::env::var("CLAUDE_CODE_USE_BEDROCK").is_ok() || std::env::var("CLAUDE_CODE_USE_VERTEX").is_ok() {
+            debug!("Bedrock/Vertex usage detected - no OAuth");
+            return Ok(false);
+        }
+        
+        // next2170: ANTHROPIC_AUTH_TOKEN or apiKeyHelper result
+        if std::env::var("ANTHROPIC_AUTH_TOKEN").is_ok() {
+            debug!("ANTHROPIC_AUTH_TOKEN detected - no OAuth");
+            return Ok(false);
+        }
+        
+        let config = self.get_config().await?;
+        if let Some(helper_command) = config.api_key_helper {
+            if let Some(result) = self.execute_api_key_helper(&helper_command).await? {
+                // Any non-None result means apiKeyHelper is configured
+                debug!("apiKeyHelper configured - no OAuth");
+                return Ok(false);
+            }
+        }
+        
+        // input20347: Current auth source - only avoid OAuth if we have an APPROVED API key
+        let auth_source = self.get_auth_source().await?;
+        if auth_source.source == "ANTHROPIC_API_KEY" {
+            // Check if the API key is approved
+            if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
+                if self.is_api_key_approved(&api_key).await? {
+                    debug!("Found approved ANTHROPIC_API_KEY - no OAuth");
+                    return Ok(false);
+                } else {
+                    debug!("Found unapproved ANTHROPIC_API_KEY - OAuth preferred");
+                }
+            }
+        } else if auth_source.source == "apiKeyHelper" {
+            debug!("Current auth source is apiKeyHelper - no OAuth");
+            return Ok(false);
+        }
+        
+        debug!("OAuth should be preferred");
+        Ok(true)
+    }
+
+    /// Check if OAuth has required scopes (JavaScript rM function)
+    async fn oauth_has_required_scopes(&mut self) -> Result<bool> {
+        if let Some(oauth) = self.get_claude_ai_oauth().await? {
+            let required_scopes = ["user:inference"];
+            let has_required = required_scopes.iter()
+                .all(|scope| oauth.scopes.contains(&scope.to_string()));
+            
+            debug!("OAuth scopes check: required={:?}, available={:?}, has_required={}", 
+                   required_scopes, oauth.scopes, has_required);
+            return Ok(has_required);
+        }
+        
+        debug!("No OAuth tokens available");
+        Ok(false)
+    }
+
+    /// Main authentication determination (JavaScript checker53 function)
+    async fn should_use_oauth(&mut self) -> Result<bool> {
+        debug!("Checking if OAuth should be used (checker53)");
+        
+        // JavaScript: if (!qS()) return false;
+        if !self.should_prefer_oauth().await? {
+            debug!("OAuth not preferred");
+            return Ok(false);
+        }
+        
+        // JavaScript: return rM(UZ()?.scopes);
+        let has_scopes = self.oauth_has_required_scopes().await?;
+        debug!("OAuth decision: should_prefer={}, has_scopes={}", true, has_scopes);
+        
+        Ok(has_scopes)
+    }
+
+    /// Determine final authentication method
+    pub async fn determine_auth_method(&mut self) -> Result<AuthMethod> {
+        debug!("Starting authentication determination");
+        
+        if self.should_use_oauth().await? {
+            debug!("Using OAuth authentication");
+            if let Some(oauth) = self.get_claude_ai_oauth().await? {
+                info!("✅ Using Claude.ai OAuth authentication");
+                return Ok(AuthMethod::ClaudeAiOauth(oauth));
+            } else {
+                error!("OAuth selected but no tokens available");
+                return Err(Error::Authentication("OAuth selected but no tokens available".to_string()));
+            }
+        }
+
+        debug!("Using API key authentication");
+        let auth_source = self.get_auth_source().await?;
+        
+        if let Some(api_key) = auth_source.key {
+            // Filter out space character sentinel value from apiKeyHelper
+            if api_key == " " {
+                error!("apiKeyHelper failed, no valid API key");
+                return Err(Error::Authentication("apiKeyHelper failed to provide valid key".to_string()));
+            }
+            
+            info!("✅ Using API key from source: {}", auth_source.source);
+            return Ok(AuthMethod::ApiKey(api_key));
+        }
+
+        error!("No authentication method available");
+        Err(Error::Authentication("No valid authentication method found".to_string()))
+    }
+
+    /// Check if Claude Desktop is available (matches JavaScript yP() and v3() functions)
+    pub async fn is_desktop_available(&self) -> bool {
+        debug!("Checking Claude Desktop availability using JavaScript logic");
+        
+        // Priority 1: Check ANTHROPIC_AUTH_TOKEN environment variable
+        if std::env::var("ANTHROPIC_AUTH_TOKEN").is_ok() {
+            debug!("✅ Found ANTHROPIC_AUTH_TOKEN - Claude Desktop available");
+            return true;
+        }
+        
+        // Priority 2: Check CLAUDE_CODE_OAUTH_TOKEN environment variable  
+        if std::env::var("CLAUDE_CODE_OAUTH_TOKEN").is_ok() {
+            debug!("✅ Found CLAUDE_CODE_OAUTH_TOKEN - Claude Desktop available");
+            return true;
+        }
+        
+        // Priority 3: Check Claude Desktop OAuth via v3() equivalent
+        match self.check_claude_desktop_oauth().await {
+            Ok(Some(_)) => {
+                debug!("✅ Found Claude Desktop OAuth tokens - Desktop available");
+                return true;
+            }
+            Ok(None) => {
+                debug!("❌ No Claude Desktop OAuth tokens found");
+            }
+            Err(e) => {
+                debug!("❌ Error checking Claude Desktop OAuth: {}", e);
+            }
+        }
+        
+        debug!("❌ Claude Desktop not available - no authentication found");
+        false
+    }
+    
+    /// Check Claude Desktop OAuth (matches JavaScript v3() function)
+    async fn check_claude_desktop_oauth(&self) -> Result<Option<ClaudeAiOauth>> {
+        debug!("Checking Claude Desktop OAuth tokens (JavaScript v3())");
+        
+        // First check CLAUDE_CODE_OAUTH_TOKEN environment variable
+        if let Ok(oauth_token) = std::env::var("CLAUDE_CODE_OAUTH_TOKEN") {
+            debug!("Found CLAUDE_CODE_OAUTH_TOKEN environment variable");
+            // Would need to parse this, but for now just indicate found
+            return Ok(None); // TODO: Parse OAuth token
+        }
+        
+        // Read OAuth data from storage (Sz().read()?.claudeAiOauth equivalent)
+        self.read_claude_desktop_oauth_storage().await
+    }
+    
+    /// Read Claude Desktop OAuth from storage (matches JavaScript Sz() storage system)
+    async fn read_claude_desktop_oauth_storage(&self) -> Result<Option<ClaudeAiOauth>> {
+        debug!("Reading Claude Desktop OAuth from storage (JavaScript Sz() system)");
+        
+        // On macOS: Try keychain first, then plaintext fallback
+        if cfg!(target_os = "macos") {
+            // Try keychain with correct service name "Claude Code-credentials"
+            match self.read_claude_desktop_keychain().await {
+                Ok(Some(oauth)) => {
+                    debug!("✅ Found Claude Desktop OAuth in keychain");
+                    return Ok(Some(oauth));
+                }
+                Ok(None) => {
+                    debug!("No OAuth found in keychain, trying plaintext fallback");
+                }
+                Err(e) => {
+                    debug!("Error reading keychain, trying plaintext fallback: {}", e);
+                }
+            }
+        }
+        
+        // Plaintext fallback: Check .credentials.json file
+        match self.read_claude_desktop_plaintext().await {
+            Ok(Some(oauth)) => {
+                debug!("✅ Found Claude Desktop OAuth in plaintext storage");
+                Ok(Some(oauth))
+            }
+            Ok(None) => {
+                debug!("❌ No OAuth found in plaintext storage");
+                Ok(None)
+            }
+            Err(e) => {
+                debug!("❌ Error reading plaintext storage: {}", e);
+                Ok(None)
+            }
+        }
+    }
+    
+    /// Read Claude Desktop OAuth from macOS keychain (correct service name)
+    async fn read_claude_desktop_keychain(&self) -> Result<Option<ClaudeAiOauth>> {
+        if !cfg!(target_os = "macos") {
+            return Ok(None);
+        }
+        
+        // Use correct service name: "Claude Code-credentials" 
+        let service_name = "Claude Code-credentials";
+        let username = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+        
+        debug!("Reading Claude Desktop OAuth from keychain with service: {}", service_name);
+        
+        match tokio::process::Command::new("security")
+            .args(&[
+                "find-generic-password",
+                "-a", &username,
+                "-w",
+                "-s", service_name
+            ])
+            .output()
+            .await
+        {
+            Ok(output) => {
+                if output.status.success() {
+                    let keychain_data = String::from_utf8_lossy(&output.stdout);
+                    let trimmed = keychain_data.trim();
+                    
+                    if !trimmed.is_empty() {
+                        // Parse JSON from keychain  
+                        debug!("Keychain JSON structure (first 200 chars): {}", &trimmed[..trimmed.len().min(200)]);
+                        match serde_json::from_str::<serde_json::Value>(trimmed) {
+                            Ok(json) => {
+                                debug!("Keychain JSON top-level keys: {:?}", json.as_object().map(|o| o.keys().collect::<Vec<_>>()));
+                                if let Some(oauth_data) = json.get("claudeAiOauth") {
+                                    debug!("claudeAiOauth field keys: {:?}", oauth_data.as_object().map(|o| o.keys().collect::<Vec<_>>()));
+                                    match serde_json::from_value::<ClaudeAiOauth>(oauth_data.clone()) {
+                                        Ok(oauth) => {
+                                            // Validate scope includes "user:inference"
+                                            if oauth.scopes.contains(&"user:inference".to_string()) {
+                                                debug!("✅ Valid Claude Desktop OAuth found in keychain");
+                                                return Ok(Some(oauth));
+                                            } else {
+                                                debug!("❌ OAuth missing user:inference scope");
+                                            }
+                                        }
+                                        Err(e) => {
+                                            debug!("❌ Failed to parse OAuth from keychain JSON: {}", e);
+                                        }
+                                    }
+                                } else {
+                                    debug!("❌ No claudeAiOauth field in keychain data");
+                                }
+                            }
+                            Err(e) => {
+                                debug!("❌ Failed to parse keychain JSON: {}", e);
+                            }
+                        }
+                    }
+                }
+                Ok(None)
+            }
+            Err(e) => {
+                debug!("❌ Failed to execute security command: {}", e);
+                Ok(None)
+            }
+        }
+    }
+    
+    /// Read Claude Desktop OAuth from plaintext .credentials.json file  
+    async fn read_claude_desktop_plaintext(&self) -> Result<Option<ClaudeAiOauth>> {
+        let credentials_path = Self::get_config_directory()?.join(".credentials.json");
+        
+        debug!("Checking plaintext credentials at: {:?}", credentials_path);
+        
+        if !credentials_path.exists() {
+            debug!("Plaintext credentials file does not exist");
+            return Ok(None);
+        }
+        
+        match fs::read_to_string(&credentials_path).await {
+            Ok(content) => {
+                match serde_json::from_str::<serde_json::Value>(&content) {
+                    Ok(json) => {
+                        if let Some(oauth_data) = json.get("claudeAiOauth") {
+                            match serde_json::from_value::<ClaudeAiOauth>(oauth_data.clone()) {
+                                Ok(oauth) => {
+                                    // Validate scope includes "user:inference"
+                                    if oauth.scopes.contains(&"user:inference".to_string()) {
+                                        debug!("✅ Valid Claude Desktop OAuth found in plaintext");
+                                        return Ok(Some(oauth));
+                                    } else {
+                                        debug!("❌ OAuth missing user:inference scope");
+                                    }
+                                }
+                                Err(e) => {
+                                    debug!("❌ Failed to parse OAuth from plaintext JSON: {}", e);
+                                }
+                            }
+                        } else {
+                            debug!("❌ No claudeAiOauth field in plaintext data");
+                        }
+                    }
+                    Err(e) => {
+                        debug!("❌ Failed to parse plaintext JSON: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                debug!("❌ Failed to read plaintext credentials file: {}", e);
+            }
+        }
+        
+        Ok(None)
+    }
+
+    /// Prompt user for Claude Desktop authentication setup
+    pub async fn prompt_desktop_auth(&mut self) -> Result<()> {
+        debug!("Setting up Claude Desktop authentication");
+        
+        // Try to read existing Claude Desktop OAuth tokens
+        match self.check_claude_desktop_oauth().await {
+            Ok(Some(oauth)) => {
+                debug!("Found existing Claude Desktop OAuth tokens");
+                
+                // Validate scopes
+                if !oauth.scopes.contains(&"user:inference".to_string()) {
+                    return Err(Error::Authentication(
+                        "Claude Desktop OAuth tokens missing required 'user:inference' scope. Please re-authenticate in Claude Desktop.".to_string()
+                    ));
+                }
+                
+                // Save OAuth configuration to config file
+                self.save_oauth_config(&oauth).await?;
+                
+                info!("✅ Claude Desktop authentication configured successfully");
+                Ok(())
+            }
+            Ok(None) => {
+                Err(Error::Authentication(
+                    "No Claude Desktop OAuth tokens found. Please sign in to Claude Desktop first, then try again.".to_string()
+                ))
+            }
+            Err(e) => {
+                Err(Error::Authentication(
+                    format!("Failed to read Claude Desktop OAuth tokens: {}", e)
+                ))
+            }
+        }
+    }
+    
+    /// Save OAuth configuration to config file
+    async fn save_oauth_config(&mut self, oauth: &ClaudeAiOauth) -> Result<()> {
+        debug!("Saving OAuth configuration to config file");
+        
+        // Read existing config or create new one
+        let mut config = if self.config_path.exists() {
+            self.get_config().await?
+        } else {
+            AuthConfig {
+                primary_api_key: None,
+                api_key_helper: None,
+                custom_api_key_responses: None,
+                oauth: None,
+            }
+        };
+        
+        // Update OAuth section
+        config.oauth = Some(oauth.clone());
+        
+        // Write config file
+        let config_json = serde_json::to_string_pretty(&config)
+            .context("Failed to serialize config")?;
+            
+        // Ensure config directory exists
+        if let Some(parent) = self.config_path.parent() {
+            if !parent.exists() {
+                fs::create_dir_all(parent).await
+                    .context("Failed to create config directory")?;
+            }
+        }
+        
+        fs::write(&self.config_path, config_json).await
+            .context("Failed to write config file")?;
+            
+        // Clear cache to force reload
+        self.config_cache = None;
+        
+        debug!("✅ OAuth configuration saved to: {:?}", self.config_path);
+        Ok(())
+    }
+    
+    /// Save full config to file
+    pub async fn save_config(&mut self, config: &AuthConfig) -> Result<()> {
+        debug!("Saving full configuration to config file");
+        
+        // Write config file
+        let config_json = serde_json::to_string_pretty(&config)
+            .context("Failed to serialize config")?;
+            
+        // Ensure config directory exists
+        if let Some(parent) = self.config_path.parent() {
+            if !parent.exists() {
+                fs::create_dir_all(parent).await
+                    .context("Failed to create config directory")?;
+            }
+        }
+        
+        fs::write(&self.config_path, config_json).await
+            .context("Failed to write config file")?;
+            
+        // Clear cache to force reload
+        self.config_cache = None;
+        
+        debug!("✅ Configuration saved to: {:?}", self.config_path);
+        Ok(())
+    }
+
+    /// Set authentication method (for CLI integration)
+    pub fn set_auth(&mut self, _auth_method: AuthMethod) {
+        // This would typically cache the auth method
+        // Implementation depends on how CLI wants to manage auth state
+        debug!("Auth method set (not yet implemented)");
+    }
+
+    /// Verify authentication works
+    pub async fn verify_auth(&mut self) -> Result<bool> {
+        // Try to determine auth method - if successful, auth should work
+        match self.determine_auth_method().await {
+            Ok(_) => {
+                debug!("Authentication verification successful");
+                Ok(true)
+            }
+            Err(e) => {
+                debug!("Authentication verification failed: {}", e);
+                Ok(false)
+            }
+        }
+    }
+
+    /// Save authentication configuration
+    pub async fn save_auth(&mut self) -> Result<()> {
+        // This would typically save current auth state to config file
+        // Implementation depends on what needs to be persisted
+        debug!("Auth save requested (not yet implemented)");
+        Ok(())
+    }
+
+    /// Convert OAuth token to API key using Anthropic's OAuth endpoint
+    async fn create_api_key_from_oauth(&self, oauth: &ClaudeAiOauth) -> Result<String> {
+        debug!("Converting OAuth token to API key via /api/oauth/claude_cli/create_api_key");
+        
+        let client = reqwest::Client::new();
+        let url = "https://api.anthropic.com/api/oauth/claude_cli/create_api_key";
+        
+        let response = client
+            .post(url)
+            .header("authorization", format!("Bearer {}", oauth.access_token))
+            .header("content-type", "application/json")
+            .json(&serde_json::json!({
+                "name": format!("claude-code-{}", chrono::Utc::now().timestamp()),
+                "scopes": ["user:inference"]
+            }))
+            .send()
+            .await
+            .context("Failed to send OAuth API key creation request")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(Error::Authentication(format!(
+                "OAuth API key creation failed ({}): {}", status, error_text
+            )));
+        }
+
+        let response_body: serde_json::Value = response.json().await
+            .context("Failed to parse OAuth API key creation response")?;
+
+        let api_key = response_body
+            .get("api_key")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| Error::Authentication("No api_key in OAuth response".to_string()))?;
+
+        debug!("Successfully created API key from OAuth token (***{})", 
+               &api_key[api_key.len().saturating_sub(6)..]);
+        
+        Ok(api_key.to_string())
+    }
+    
+    /// Save API key from OAuth login to keychain or config file
+    pub async fn save_api_key_from_oauth(&mut self, api_key: &str) -> Result<()> {
+        debug!("Saving API key from OAuth login");
+        
+        // On macOS, save to keychain
+        if cfg!(target_os = "macos") {
+            let service_name = Self::get_keychain_service_name()?;
+            let username = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+            
+            // Delete existing entry first
+            let _ = tokio::process::Command::new("security")
+                .args(&[
+                    "delete-generic-password",
+                    "-a", &username,
+                    "-s", &service_name
+                ])
+                .output()
+                .await;
+            
+            // Add new API key
+            let output = tokio::process::Command::new("security")
+                .args(&[
+                    "add-generic-password",
+                    "-a", &username,
+                    "-s", &service_name,
+                    "-w", api_key,
+                    "-U"  // Update if exists
+                ])
+                .output()
+                .await
+                .context("Failed to save API key to keychain")?;
+            
+            if !output.status.success() {
+                let error = String::from_utf8_lossy(&output.stderr);
+                return Err(Error::Config(format!("Failed to save to keychain: {}", error)));
+            }
+            
+            info!("✅ API key saved to macOS keychain");
+        } else {
+            // Save to config file
+            let mut config = self.get_config().await?;
+            config.primary_api_key = Some(api_key.to_string());
+            
+            // Mark as approved
+            if config.custom_api_key_responses.is_none() {
+                config.custom_api_key_responses = Some(CustomApiKeyResponses {
+                    approved: vec![],
+                    rejected: vec![],
+                });
+            }
+            
+            if let Some(ref mut responses) = config.custom_api_key_responses {
+                let suffix = if api_key.len() > 20 {
+                    &api_key[api_key.len() - 20..]
+                } else {
+                    api_key
+                };
+                
+                if !responses.approved.contains(&suffix.to_string()) {
+                    responses.approved.push(suffix.to_string());
+                }
+            }
+            
+            self.save_config(&config).await?;
+            info!("✅ API key saved to config file");
+        }
+        
+        // Clear caches
+        self.config_cache = None;
+        self.keychain_cache = None;
+        
+        Ok(())
+    }
+}
+
+/// Get or prompt for authentication (main entry point)
+pub async fn get_or_prompt_auth() -> Result<AuthMethod> {
+    let mut auth_manager = AuthManager::new()?;
+    auth_manager.determine_auth_method().await
+}
+
+/// Load AI configuration with authentication method
+pub fn load_config_with_auth(auth_method: AuthMethod) -> Result<crate::ai::AIConfig> {
+    let mut config = crate::ai::AIConfig::default();
+    
+    match auth_method {
+        AuthMethod::ApiKey(api_key) => {
+            config.api_key = api_key;
+            config.base_url = "https://api.anthropic.com/v1".to_string();
+        }
+        AuthMethod::ClaudeAiOauth(oauth_auth) => {
+            // Use authToken for OAuth, not apiKey
+            config.auth_token = Some(oauth_auth.access_token);
+            config.api_key = String::new(); // No API key for OAuth
+            config.base_url = "https://api.anthropic.com/v1".to_string(); // OAuth uses same endpoint as API keys
+        }
+    }
+    
+    // Load other settings from environment if available
+    if let Ok(base_url) = std::env::var("ANTHROPIC_BASE_URL") {
+        config.base_url = base_url;
+    }
+    
+    if let Ok(model) = std::env::var("ANTHROPIC_MODEL") {
+        config.default_model = model;
+    }
+    
+    Ok(config)
+}

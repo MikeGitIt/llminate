@@ -1,0 +1,42 @@
+{
+  "appName": "OutputFormatter",
+  "version": "1.0.0",
+  "settings": {
+    "theme": "dark",
+    "fontSize": 14,
+    "enableNotifications": true,
+    "maxItems": 100
+  },
+  "users": [
+    {
+      "id": 1,
+      "name": "John Doe",
+      "role": "admin",
+      "permissions": ["read", "write", "delete"]
+    },
+    {
+      "id": 2,
+      "name": "Jane Smith",
+      "role": "editor",
+      "permissions": ["read", "write"]
+    },
+    {
+      "id": 3,
+      "name": "Bob Johnson",
+      "role": "viewer",
+      "permissions": ["read"]
+    }
+  ],
+  "features": {
+    "dashboard": true,
+    "reports": true,
+    "userManagement": true,
+    "apiAccess": false
+  },
+  "apiEndpoints": {
+    "base": "https://api.example.com/v1",
+    "auth": "/auth",
+    "users": "/users",
+    "data": "/data"
+  }
+}

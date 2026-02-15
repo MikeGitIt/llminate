@@ -1,0 +1,42 @@
+This is a test file to demonstrate output formatting.
+
+# Code Blocks
+Here's how code appears in a code block:
+```python
+def hello_world():
+    print("Hello, world!")
+    return True
+```
+
+# Tables
+| Header 1 | Header 2 | Header 3 |
+|----------|----------|----------|
+| Value 1  | Value 2  | Value 3  |
+| Data A   | Data B   | Data C   |
+
+# Lists
+- Item 1
+- Item 2
+  - Nested item A
+  - Nested item B
+- Item 3
+
+1. Numbered item 1
+2. Numbered item 2
+3. Numbered item 3
+
+# Text Formatting
+**Bold text**
+*Italic text*
+~~Strikethrough~~
+`Inline code`
+
+# Quotes
+> This is a blockquote
+> It can span multiple lines
+
+# Horizontal Rule
+---
+
+# Links
+[Example Link](https://example.com)

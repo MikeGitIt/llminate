@@ -1,0 +1,72 @@
+curl 'https://googleads.g.doubleclick.net/pagead/id' \
+-X 'GET' \
+-H 'sec-ch-ua-model: ""' \
+-H 'sec-ch-ua-mobile: ?0' \
+-H 'sec-ch-ua-arch: "arm"' \
+-H 'sec-ch-ua-full-version: "139.0.7258.139"' \
+-H 'sec-ch-ua-platform-version: "15.6.1"' \
+-H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36' \
+-H 'sec-ch-ua-form-factors: "Desktop"' \
+-H 'sec-ch-ua-wow64: ?0' \
+-H 'sec-ch-ua-full-version-list: "Not;A=Brand";v="99.0.0.0", "Google Chrome";v="139.0.7258.139", "Chromium";v="139.0.7258.139"' \
+-H 'sec-ch-ua-platform: "macOS"' \
+-H 'Referer: https://www.youtube.com/' \
+-H 'sec-ch-ua: "Not;A=Brand";v="99", "Google Chrome";v="139", "Chromium";v="139"' \
+-H 'sec-ch-ua-bitness: "64"' \
+--data-raw '{"id":4,"error":{"code":-32602,"message":"Invalid parameters","data":"Failed to deserialize params - CBOR: map start expected at position 0"}}' \
+--compressed
+
+curl 'https://www.youtube.com/s/desktop/271635d3/img/logos/favicon.ico' \
+-X 'GET' \
+-H 'sec-ch-ua: "Not;A=Brand";v="99", "Google Chrome";v="139", "Chromium";v="139"' \
+-H 'sec-ch-ua-arch: "arm"' \
+-H 'sec-ch-ua-platform-version: "15.6.1"' \
+-H 'sec-ch-ua-form-factors: "Desktop"' \
+-H 'sec-ch-ua-full-version-list: "Not;A=Brand";v="99.0.0.0", "Google Chrome";v="139.0.7258.139", "Chromium";v="139.0.7258.139"' \
+-H 'sec-ch-ua-wow64: ?0' \
+-H 'sec-ch-ua-bitness: "64"' \
+-H 'Referer: https://www.youtube.com/' \
+-H 'sec-ch-ua-full-version: "139.0.7258.139"' \
+-H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36' \
+-H 'sec-ch-ua-mobile: ?0' \
+-H 'sec-ch-ua-platform: "macOS"' \
+-H 'sec-ch-ua-model: ""' \
+--data-raw '{"id":4,"error":{"code":-32602,"message":"Invalid parameters","data":"Failed to deserialize params - CBOR: map start expected at position 0"}}' \
+--compressed
+
+curl 'https://fonts.gstatic.com/s/i/youtube_outline/add_circle/v6/24px.svg' \
+-X 'GET' \
+-H 'sec-ch-ua-mobile: ?0' \
+-H 'sec-ch-ua-full-version-list: "Not;A=Brand";v="99.0.0.0", "Google Chrome";v="139.0.7258.139", "Chromium";v="139.0.7258.139"' \
+-H 'sec-ch-ua-model: ""' \
+-H 'Referer: https://www.youtube.com/' \
+-H 'sec-ch-ua-wow64: ?0' \
+-H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36' \
+-H 'sec-ch-ua-platform-version: "15.6.1"' \
+-H 'sec-ch-ua-form-factors: "Desktop"' \
+-H 'sec-ch-ua: "Not;A=Brand";v="99", "Google Chrome";v="139", "Chromium";v="139"' \
+-H 'sec-ch-ua-bitness: "64"' \
+-H 'sec-ch-ua-platform: "macOS"' \
+-H 'sec-ch-ua-arch: "arm"' \
+-H 'sec-ch-ua-full-version: "139.0.7258.139"' \
+--data-raw '{"id":4,"error":{"code":-32602,"message":"Invalid parameters","data":"Failed to deserialize params - CBOR: map start expected at position 0"}}' \
+--compressed
+
+curl 'https://googleads.g.doubleclick.net/pagead/id' \
+-X 'GET' \
+-H 'sec-ch-ua-form-factors: "Desktop"' \
+-H 'sec-ch-ua-bitness: "64"' \
+-H 'sec-ch-ua-arch: "arm"' \
+-H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36' \
+-H 'sec-ch-ua-full-version-list: "Not;A=Brand";v="99.0.0.0", "Google Chrome";v="139.0.7258.139", "Chromium";v="139.0.7258.139"' \
+-H 'sec-ch-ua-platform: "macOS"' \
+-H 'sec-ch-ua: "Not;A=Brand";v="99", "Google Chrome";v="139", "Chromium";v="139"' \
+-H 'sec-ch-ua-wow64: ?0' \
+-H 'sec-ch-ua-mobile: ?0' \
+-H 'sec-ch-ua-model: ""' \
+-H 'sec-ch-ua-full-version: "139.0.7258.139"' \
+-H 'sec-ch-ua-platform-version: "15.6.1"' \
+-H 'Referer: https://www.youtube.com/' \
+--data-raw '{"id":4,"error":{"code":-32602,"message":"Invalid parameters","data":"Failed to deserialize params - CBOR: map start expected at position 0"}}' \
+--compressed
+
