@@ -541,6 +541,9 @@ impl AgentTool {
     ) -> Result<AgentResult> {
         let start = Instant::now();
 
+        // Generate a unique session ID for this agent's hook context
+        let agent_session_id = Uuid::new_v4().to_string();
+
         // Create a new AI client for the sub-agent
         let ai_client = create_client().await?;
 
@@ -654,6 +657,7 @@ impl AgentTool {
                         // Execute tool with cancellation context
                         let tool_context = Some(crate::ai::tools::ToolContext {
                             tool_use_id: id.clone(),
+                            session_id: agent_session_id.clone(),
                             cancellation_token: cancellation_token.clone(),
                             event_tx: None, // Subagents don't need UI events
                         });
@@ -737,6 +741,9 @@ impl AgentTool {
     ) -> Result<AgentResult> {
         let start = Instant::now();
 
+        // Generate a unique session ID for this agent's hook context
+        let agent_session_id = Uuid::new_v4().to_string();
+
         // Create a new AI client for the sub-agent
         let ai_client = create_client().await?;
 
@@ -815,6 +822,7 @@ impl AgentTool {
 
                         let tool_context = Some(crate::ai::tools::ToolContext {
                             tool_use_id: id.clone(),
+                            session_id: agent_session_id.clone(),
                             cancellation_token: cancellation_token.clone(),
                             event_tx: None,
                         });

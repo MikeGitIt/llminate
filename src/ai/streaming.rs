@@ -36,6 +36,15 @@ pub enum StreamingUpdate {
         id: String,
         input: serde_json::Value,
     },
+    /// Thinking started (interleaved-thinking-2025-05-14 beta)
+    ThinkingStart,
+    /// Thinking chunk received
+    ThinkingChunk(String),
+    /// Thinking completed with signature
+    ThinkingComplete {
+        thinking: String,
+        signature: Option<String>,
+    },
     /// Message completed
     MessageComplete {
         stop_reason: Option<String>,
@@ -103,6 +112,15 @@ impl StreamingHandler {
                                         tool_input_buffer.clear();
                                         let _ = tx.send(StreamingUpdate::ToolUseStart { id, name });
                                     }
+                                    ContentBlock::Thinking { thinking, .. } => {
+                                        let _ = tx.send(StreamingUpdate::ThinkingStart);
+                                        if !thinking.is_empty() {
+                                            let _ = tx.send(StreamingUpdate::ThinkingChunk(thinking));
+                                        }
+                                    }
+                                    ContentBlock::RedactedThinking { .. } => {
+                                        // Redacted thinking is not displayed to user
+                                    }
                                 }
                             }
                             StreamEvent::ContentBlockDelta { delta, .. } => {
@@ -118,6 +136,12 @@ impl StreamingHandler {
                                                 chunk: partial_json,
                                             });
                                         }
+                                    }
+                                    ContentDelta::ThinkingDelta { thinking } => {
+                                        let _ = tx.send(StreamingUpdate::ThinkingChunk(thinking));
+                                    }
+                                    ContentDelta::SignatureDelta { .. } => {
+                                        // Signature is internal, not displayed
                                     }
                                 }
                             }
@@ -200,6 +224,12 @@ pub struct StreamAccumulator {
     tool_uses: Vec<AccumulatedToolUse>,
     current_tool_index: Option<usize>,
     usage: TokenUsage,
+    /// Accumulated thinking content (interleaved-thinking-2025-05-14 beta)
+    thinking_buffer: String,
+    /// Whether currently in thinking mode
+    is_thinking: bool,
+    /// Thinking signature (for verification)
+    thinking_signature: Option<String>,
 }
 
 /// Accumulated tool use
@@ -222,9 +252,12 @@ impl StreamAccumulator {
                 input_tokens: 0,
                 output_tokens: 0,
             },
+            thinking_buffer: String::new(),
+            is_thinking: false,
+            thinking_signature: None,
         }
     }
-    
+
     /// Process a streaming update
     pub fn process_update(&mut self, update: StreamingUpdate) {
         match update {
@@ -253,6 +286,18 @@ impl StreamAccumulator {
                 }
                 self.current_tool_index = None;
             }
+            StreamingUpdate::ThinkingStart => {
+                self.is_thinking = true;
+                self.thinking_buffer.clear();
+            }
+            StreamingUpdate::ThinkingChunk(chunk) => {
+                self.thinking_buffer.push_str(&chunk);
+            }
+            StreamingUpdate::ThinkingComplete { thinking, signature } => {
+                self.thinking_buffer = thinking;
+                self.thinking_signature = signature;
+                self.is_thinking = false;
+            }
             StreamingUpdate::MessageComplete { usage, .. } => {
                 self.usage = usage;
             }
@@ -260,6 +305,16 @@ impl StreamAccumulator {
                 // Error handling done elsewhere
             }
         }
+    }
+
+    /// Check if currently in thinking mode
+    pub fn is_thinking(&self) -> bool {
+        self.is_thinking
+    }
+
+    /// Get accumulated thinking content
+    pub fn get_thinking(&self) -> &str {
+        &self.thinking_buffer
     }
     
     /// Get accumulated text
@@ -341,6 +396,16 @@ where
                                 ContentBlock::ToolUse { id, name, .. } => {
                                     StreamingUpdate::ToolUseStart { id, name }
                                 }
+                                ContentBlock::Thinking { thinking, .. } => {
+                                    if thinking.is_empty() {
+                                        StreamingUpdate::ThinkingStart
+                                    } else {
+                                        StreamingUpdate::ThinkingChunk(thinking)
+                                    }
+                                }
+                                ContentBlock::RedactedThinking { .. } => {
+                                    continue; // Redacted thinking not shown to user
+                                }
                             }
                         }
                         StreamEvent::ContentBlockDelta { delta, .. } => match delta {
@@ -358,6 +423,12 @@ where
                                 } else {
                                     continue;
                                 }
+                            }
+                            ContentDelta::ThinkingDelta { thinking } => {
+                                StreamingUpdate::ThinkingChunk(thinking)
+                            }
+                            ContentDelta::SignatureDelta { .. } => {
+                                continue; // Signature is internal
                             }
                         },
                         StreamEvent::ContentBlockStop { .. } => {

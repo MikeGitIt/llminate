@@ -14,6 +14,32 @@ use tui_textarea::TextArea;
 use futures::StreamExt;
 use crate::ai::streaming::{StreamingHandler, StreamingUpdate};
 
+/// Create a properly configured TextArea with no underline on cursor line
+/// This helper ensures consistent TextArea configuration across the application
+fn create_configured_textarea() -> TextArea<'static> {
+    let mut textarea = TextArea::default();
+    // Remove the default underline styling on cursor line
+    textarea.set_cursor_line_style(ratatui::style::Style::default());
+    // Set visible cursor style (block cursor with white background)
+    textarea.set_cursor_style(ratatui::style::Style::default().bg(ratatui::style::Color::White).fg(ratatui::style::Color::Black));
+    textarea.set_placeholder_text("Type your message here. Ctrl+J for newline, Enter to send.");
+    textarea
+}
+
+/// Create a configured TextArea with initial content
+fn create_configured_textarea_with_content<'a, I>(lines: I) -> TextArea<'static>
+where
+    I: IntoIterator,
+    I::Item: Into<String>,
+{
+    let mut textarea = TextArea::from(lines.into_iter().map(|s| s.into()).collect::<Vec<String>>());
+    // Remove the default underline styling on cursor line
+    textarea.set_cursor_line_style(ratatui::style::Style::default());
+    // Set visible cursor style (block cursor with white background)
+    textarea.set_cursor_style(ratatui::style::Style::default().bg(ratatui::style::Color::White).fg(ratatui::style::Color::Black));
+    textarea
+}
+
 // REMOVED: PendingToolExecution - no longer needed with streaming permission flow
 
 #[derive(Debug, Clone)]
@@ -59,6 +85,7 @@ impl std::fmt::Debug for PendingPermission {
 pub struct AppState {
     // Core state
     pub session_id: String,
+    pub session_name: Option<String>,
     pub messages: Vec<Message>,
     pub input_textarea: TextArea<'static>,
     pub input_mode: bool,
@@ -133,7 +160,11 @@ pub struct AppState {
     pub show_session_picker: bool,
     pub session_picker_selected: usize,
     pub session_picker_items: Vec<SessionInfo>,
-    
+
+    // Model picker dialog
+    pub show_model_picker: bool,
+    pub model_picker_selected: usize,
+
     // Expanded view mode for Ctrl+R (toggles between collapsed/expanded view)
     pub expanded_view: bool,
     
@@ -145,6 +176,10 @@ pub struct AppState {
     // Task status display
     pub current_task_status: Option<String>,
     pub spinner_frame: usize,
+    /// Determinate progress (0.0 to 1.0) - None means indeterminate
+    pub current_progress: Option<f64>,
+    /// Whether terminal progress bar is enabled (matches JS terminalProgressBarEnabled)
+    pub terminal_progress_bar_enabled: bool,
     
     // Iteration limit tracking for /continue support
     pub hit_iteration_limit: bool,
@@ -172,6 +207,28 @@ pub struct AppState {
     pub show_status_view: bool,
     pub status_view_tab: usize,  // 0=Status, 1=Config, 2=Usage
     pub status_config_selected: usize,  // Selected item in Config tab
+
+    // Prompt stash (Ctrl+S - matches JavaScript line 480754)
+    pub stashed_input: Option<(String, usize)>,  // (text, cursor_offset)
+
+    // TODOs expanded display (Ctrl+T - matches JavaScript line 481215)
+    pub show_todos_expanded: bool,
+
+    // Find/Search mode (Ctrl+F)
+    pub show_find_mode: bool,
+    pub find_query: String,
+    pub find_results: Vec<usize>,  // Line indices matching search
+    pub find_current_index: usize,
+
+    // Thinking display (interleaved-thinking-2025-05-14 beta)
+    pub current_thinking: Option<String>,
+    pub thinking_start_time: Option<std::time::Instant>,
+
+    // Chat display text selection
+    pub chat_selection_start: Option<(usize, usize)>,  // (line, column)
+    pub chat_selection_end: Option<(usize, usize)>,    // (line, column)
+    pub chat_is_selecting: bool,
+    pub chat_selected_text: Option<String>,
 }
 
 impl AppState {
@@ -193,13 +250,11 @@ impl AppState {
             }
         }
         
-        let mut textarea = TextArea::default();
-        textarea.set_placeholder_text("Type your message here. Press Shift+Enter for newline, Enter to send.");
-        
         let mut state = Self {
             session_id: session_id.clone(),
+            session_name: None,
             messages: Vec::new(),
-            input_textarea: textarea,
+            input_textarea: create_configured_textarea(),
             input_mode: true,
             is_processing: false,
             should_exit: false,
@@ -255,6 +310,10 @@ impl AppState {
             show_session_picker: false,
             session_picker_selected: 0,
             session_picker_items: Vec::new(),
+
+            show_model_picker: false,
+            model_picker_selected: 0,
+
             expanded_view: false,
             
             // Input area state
@@ -268,6 +327,8 @@ impl AppState {
             
             current_task_status: None,
             spinner_frame: 0,
+            current_progress: None,
+            terminal_progress_bar_enabled: true,  // Enabled by default like JavaScript
             hit_iteration_limit: false,
             continuation_messages: None,
             loaded_ai_messages: None,
@@ -287,6 +348,28 @@ impl AppState {
             show_status_view: false,
             status_view_tab: 0,  // Start on Status tab
             status_config_selected: 0,
+
+            // Prompt stash (Ctrl+S)
+            stashed_input: None,
+
+            // TODOs expanded display (Ctrl+T)
+            show_todos_expanded: false,
+
+            // Find/Search mode (Ctrl+F)
+            show_find_mode: false,
+            find_query: String::new(),
+            find_results: Vec::new(),
+            find_current_index: 0,
+
+            // Thinking display
+            current_thinking: None,
+            thinking_start_time: None,
+
+            // Chat display text selection
+            chat_selection_start: None,
+            chat_selection_end: None,
+            chat_is_selecting: false,
+            chat_selected_text: None,
         };
 
         // Load existing TODOs for this session
@@ -372,9 +455,19 @@ impl AppState {
         
         // Spawn the persistent agent loop
         let handle = tokio::spawn(async move {
+            // Execute SessionStart hooks at the beginning of the session
+            let session_start_context = crate::hooks::HookContext::new(
+                crate::hooks::HookType::SessionStart,
+                &session_id,
+            );
+            let _ = crate::hooks::execute_hooks(
+                crate::hooks::HookType::SessionStart,
+                &session_start_context,
+            ).await;
+
             // This agent loop runs for the ENTIRE session
             let mut messages: Vec<crate::ai::Message> = Vec::new();
-            
+
             // Create tool executor with cloned permissions
             let mut tool_executor = crate::ai::tools::ToolExecutor::new();
             tool_executor.set_allowed_tools(allowed_tools);
@@ -385,6 +478,36 @@ impl AppState {
             loop {
                 tokio::select! {
                     Some((user_input, loaded_messages, current_model)) = agent_rx.recv() => {
+                // Execute UserPromptSubmit hooks when user submits input
+                if !user_input.is_empty() {
+                    let prompt_context = crate::hooks::HookContext::new(
+                        crate::hooks::HookType::UserPromptSubmit,
+                        &session_id,
+                    );
+                    let hook_results = crate::hooks::execute_hooks(
+                        crate::hooks::HookType::UserPromptSubmit,
+                        &prompt_context,
+                    ).await;
+
+                    // Check if any hook wants to block execution
+                    let mut blocked = false;
+                    for result in &hook_results {
+                        if result.stop_execution {
+                            if let Some(tx) = &event_tx {
+                                let msg = result.stop_reason.clone()
+                                    .unwrap_or_else(|| "Prompt blocked by hook".to_string());
+                                let _ = tx.send(crate::tui::TuiEvent::Error(msg));
+                                let _ = tx.send(crate::tui::TuiEvent::ProcessingComplete);
+                            }
+                            blocked = true;
+                            break;
+                        }
+                    }
+                    if blocked {
+                        continue;
+                    }
+                }
+
                 // If we have loaded messages (from resume), replace our current message history
                 if let Some(loaded) = loaded_messages {
                     messages = loaded;
@@ -746,10 +869,11 @@ impl AppState {
                                     if should_execute {
                                         let tool_context = crate::ai::tools::ToolContext {
                                             tool_use_id: id.clone(),
+                                            session_id: session_id.clone(),
                                             event_tx: event_tx.clone(),
                                             cancellation_token: Some(iteration_cancel_token.clone()),
                                         };
-                                        
+
                                         tracing::debug!("DEBUG: Tool {} execution starting with ID: {}", tool_name, id);
                                         tracing::debug!("DEBUG: Tool input: {:?}", input);
                                         
@@ -896,6 +1020,73 @@ impl AppState {
                                 }
                             }
                             StreamingUpdate::Error(e) => {
+                                // CRITICAL: When stream is cancelled/errored, we must add tool_results
+                                // for any pending tool_uses to maintain proper conversation state.
+                                // This matches JavaScript's variable13401 function which creates
+                                // tool_result with is_error: true for all pending tool_use blocks.
+
+                                // First, if we have any tool_uses, add the assistant message
+                                if !tool_uses.is_empty() || !current_text.is_empty() {
+                                    let mut assistant_parts: Vec<crate::ai::ContentPart> = Vec::new();
+                                    if !current_text.is_empty() {
+                                        assistant_parts.push(crate::ai::ContentPart::Text {
+                                            text: current_text.clone(),
+                                            citations: None,
+                                        });
+                                    }
+                                    assistant_parts.extend(tool_uses.clone());
+
+                                    messages.push(crate::ai::Message {
+                                        role: crate::ai::MessageRole::Assistant,
+                                        content: crate::ai::MessageContent::Multipart(assistant_parts),
+                                        name: None,
+                                    });
+                                }
+
+                                // Create tool_results for ALL pending tool_uses with is_error: true
+                                // This is the key fix - matches JS variable8516 interrupt message
+                                const INTERRUPT_MESSAGE: &str = "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed.";
+
+                                let mut interrupt_results: Vec<crate::ai::ContentPart> = Vec::new();
+                                for tool_use in &tool_uses {
+                                    if let crate::ai::ContentPart::ToolUse { id, .. } = tool_use {
+                                        interrupt_results.push(crate::ai::ContentPart::ToolResult {
+                                            tool_use_id: id.clone(),
+                                            content: INTERRUPT_MESSAGE.to_string(),
+                                            is_error: Some(true),
+                                        });
+                                    }
+                                }
+
+                                // Also add tool_results for any tools in pending_tools that haven't
+                                // been fully processed yet (started but not completed)
+                                for (pending_id, _pending_name) in &pending_tools {
+                                    // Check if we already have a result for this tool
+                                    let already_has_result = interrupt_results.iter().any(|r| {
+                                        if let crate::ai::ContentPart::ToolResult { tool_use_id, .. } = r {
+                                            tool_use_id == pending_id
+                                        } else {
+                                            false
+                                        }
+                                    });
+                                    if !already_has_result {
+                                        interrupt_results.push(crate::ai::ContentPart::ToolResult {
+                                            tool_use_id: pending_id.clone(),
+                                            content: INTERRUPT_MESSAGE.to_string(),
+                                            is_error: Some(true),
+                                        });
+                                    }
+                                }
+
+                                // Add the user message with tool_results if we have any
+                                if !interrupt_results.is_empty() {
+                                    messages.push(crate::ai::Message {
+                                        role: crate::ai::MessageRole::User,
+                                        content: crate::ai::MessageContent::Multipart(interrupt_results),
+                                        name: None,
+                                    });
+                                }
+
                                 if let Some(tx) = &event_tx {
                                     let _ = tx.send(crate::tui::TuiEvent::Error(e));
                                     let _ = tx.send(crate::tui::TuiEvent::UpdateTaskStatus(None));
@@ -1023,7 +1214,7 @@ impl AppState {
         }
         
         // Clear the textarea
-        self.input_textarea = TextArea::default();
+        self.input_textarea = create_configured_textarea();
         
         // Add to history
         self.add_to_history(input.clone());
@@ -1336,10 +1527,11 @@ impl AppState {
                                     has_tool_use = true;
                                     let tool_context = crate::ai::tools::ToolContext {
                                         tool_use_id: id.clone(),
+                                        session_id: session_id.clone(),
                                         event_tx: event_tx_inner.clone(),
                                         cancellation_token: Some(cancel_token_for_loop.clone()),
                                     };
-                                    
+
                                     // Execute the tool
                                     match tool_executor.execute_with_context(&tool_name, input.clone(), Some(tool_context)).await {
                                         Ok(result) => {
@@ -1538,13 +1730,14 @@ impl AppState {
                         // Create tool context with event sender for suspension-based permissions
                         // Create cancellation token for this tool execution
                         let tool_cancel_token = CancellationToken::new();
-                        
+
                         let tool_context = crate::ai::tools::ToolContext {
                             tool_use_id: id.clone(),
+                            session_id: self.session_id.clone(),
                             event_tx: self.event_tx.clone(),
                             cancellation_token: Some(tool_cancel_token),
                         };
-                        
+
                         // For tools that might need permissions, we need to handle them specially
                         // to avoid blocking the UI thread
                         if name == "Bash" && self.event_tx.is_some() {
@@ -1553,22 +1746,24 @@ impl AppState {
                             let tool_id = id.clone();
                             let tool_name = name.clone();
                             let tool_input = input.clone();
-                            
+                            let session_id_for_spawn = self.session_id.clone();
+
                             // Clone the data needed for tool executor creation
                             let allowed_tools = self.allowed_tools.clone();
                             let disallowed_tools = self.disallowed_tools.clone();
-                            
+
                             tokio::spawn(async move {
                                 // Create tool executor with cloned permissions
                                 let mut tool_executor = crate::ai::tools::ToolExecutor::new();
                                 tool_executor.set_allowed_tools(allowed_tools);
                                 tool_executor.set_disallowed_tools(disallowed_tools);
-                                
+
                                 // Create cancellation token for background tool execution
                                 let bg_cancel_token = CancellationToken::new();
-                                
+
                                 let context = crate::ai::tools::ToolContext {
                                     tool_use_id: tool_id.clone(),
+                                    session_id: session_id_for_spawn,
                                     event_tx: Some(event_tx.clone()),
                                     cancellation_token: Some(bg_cancel_token),
                                 };
@@ -1816,9 +2011,10 @@ impl AppState {
                             // Execute tool immediately as it completes
                             // Create cancellation token for permission-required tool
                             let perm_cancel_token = CancellationToken::new();
-                            
+
                             let tool_context = crate::ai::tools::ToolContext {
                                 tool_use_id: id.clone(),
+                                session_id: self.session_id.clone(),
                                 event_tx: self.event_tx.clone(),
                                 cancellation_token: Some(perm_cancel_token),
                             };
@@ -1988,11 +2184,98 @@ impl AppState {
                             }
                         }
                     }
+                    StreamingUpdate::ThinkingStart => {
+                        // Set thinking state for UI display
+                        self.set_thinking(Some("thinking...".to_string()));
+                        self.current_task_status = Some("thinking".to_string());
+                        // Trigger UI redraw
+                        if let Some(event_tx) = &self.event_tx {
+                            let _ = event_tx.send(crate::tui::TuiEvent::Redraw);
+                        }
+                    }
+                    StreamingUpdate::ThinkingChunk(chunk) => {
+                        // Update thinking content
+                        if let Some(thinking) = &mut self.current_thinking {
+                            thinking.push_str(&chunk);
+                        } else {
+                            self.current_thinking = Some(chunk);
+                        }
+                        // Trigger UI redraw
+                        if let Some(event_tx) = &self.event_tx {
+                            let _ = event_tx.send(crate::tui::TuiEvent::Redraw);
+                        }
+                    }
+                    StreamingUpdate::ThinkingComplete { thinking, .. } => {
+                        // Display thinking duration
+                        if let Some(duration) = self.get_thinking_duration_secs() {
+                            self.current_task_status = Some(format!("thought for {}s", duration));
+                        }
+                        self.current_thinking = None;
+                        self.thinking_start_time = None;
+                        // Trigger UI redraw
+                        if let Some(event_tx) = &self.event_tx {
+                            let _ = event_tx.send(crate::tui::TuiEvent::Redraw);
+                        }
+                    }
                     StreamingUpdate::MessageComplete { stop_reason: reason, .. } => {
                         stop_reason = reason;
                         break;
                     }
                     StreamingUpdate::Error(e) => {
+                        // CRITICAL: When stream is cancelled/errored, we must add tool_results
+                        // for any pending tool_uses to maintain proper conversation state.
+                        // This matches JavaScript's variable13401 function.
+
+                        const INTERRUPT_MESSAGE: &str = "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed.";
+
+                        // First, if we have any assistant content or pending tools, add the assistant message
+                        if !current_assistant_message.is_empty() || !pending_tools.is_empty() {
+                            let mut assistant_parts: Vec<crate::ai::ContentPart> = Vec::new();
+                            if !current_assistant_message.is_empty() {
+                                assistant_parts.push(crate::ai::ContentPart::Text {
+                                    text: current_assistant_message.clone(),
+                                    citations: None,
+                                });
+                            }
+                            // Add any pending tool_uses
+                            for (tool_id, (tool_name, input_buffer)) in &pending_tools {
+                                let input_value = serde_json::from_str(input_buffer)
+                                    .unwrap_or(serde_json::json!({}));
+                                assistant_parts.push(crate::ai::ContentPart::ToolUse {
+                                    id: tool_id.clone(),
+                                    name: tool_name.clone(),
+                                    input: input_value,
+                                });
+                            }
+
+                            if !assistant_parts.is_empty() {
+                                messages.push(crate::ai::Message {
+                                    role: crate::ai::MessageRole::Assistant,
+                                    content: crate::ai::MessageContent::Multipart(assistant_parts),
+                                    name: None,
+                                });
+                            }
+                        }
+
+                        // Create tool_results for ALL pending tool_uses with is_error: true
+                        let mut interrupt_results: Vec<crate::ai::ContentPart> = Vec::new();
+                        for (pending_id, _) in &pending_tools {
+                            interrupt_results.push(crate::ai::ContentPart::ToolResult {
+                                tool_use_id: pending_id.clone(),
+                                content: INTERRUPT_MESSAGE.to_string(),
+                                is_error: Some(true),
+                            });
+                        }
+
+                        // Add the user message with tool_results if we have any
+                        if !interrupt_results.is_empty() {
+                            messages.push(crate::ai::Message {
+                                role: crate::ai::MessageRole::User,
+                                content: crate::ai::MessageContent::Multipart(interrupt_results),
+                                name: None,
+                            });
+                        }
+
                         self.add_message(&format!("Stream error: {}", e));
                         return Err(Error::Other(e));
                     }
@@ -2041,7 +2324,44 @@ impl AppState {
                 self.show_command_help();
             }
             "/clear" => {
+                // Execute SessionEnd hooks before clearing
+                let end_context = crate::hooks::HookContext::new(
+                    crate::hooks::HookType::SessionEnd,
+                    &self.session_id,
+                );
+                let _ = crate::hooks::execute_hooks(
+                    crate::hooks::HookType::SessionEnd,
+                    &end_context,
+                ).await;
+
+                // Save current conversation before clearing (archive it)
+                if self.messages.len() > 1 {
+                    if let Err(e) = self.save_conversation().await {
+                        self.add_message(&format!("Warning: Failed to archive conversation: {}", e));
+                    }
+                }
+
+                // Clear conversation
                 self.clear_messages();
+
+                // Clear line render cache
+                self.invalidate_cache();
+
+                // Generate new session ID for fresh start
+                let new_session_id = crate::utils::generate_session_id();
+                self.session_id = new_session_id.clone();
+
+                // Execute SessionStart hooks after clearing
+                let start_context = crate::hooks::HookContext::new(
+                    crate::hooks::HookType::SessionStart,
+                    &self.session_id,
+                );
+                let _ = crate::hooks::execute_hooks(
+                    crate::hooks::HookType::SessionStart,
+                    &start_context,
+                ).await;
+
+                self.add_message(&format!("✅ Conversation cleared (new session: {})", &self.session_id[..8]));
             }
             "/save" => {
                 self.save_conversation().await?;
@@ -2059,15 +2379,31 @@ impl AppState {
                     // Expand short model names to full names
                     let model_input = parts[1].to_lowercase();
                     self.current_model = match model_input.as_str() {
-                        "sonnet" => "claude-sonnet-4-5-20250929".to_string(),
-                        "opus" => "claude-opus-4-1-20250805".to_string(),
-                        "haiku" => "claude-3-7-haiku-20250219".to_string(),
+                        "sonnet" | "sonnet4.5" => "claude-sonnet-4-5-20250929".to_string(),
+                        "sonnet4" => "claude-sonnet-4-20250514".to_string(),
+                        "opus" | "opus4.5" => "claude-opus-4-5-20251101".to_string(),
+                        "opus4.1" | "opus4" => "claude-opus-4-1-20250805".to_string(),
+                        "haiku" | "haiku4.5" => "claude-haiku-4-5-20251001".to_string(),
                         _ => parts[1].to_string(), // Use as-is if not a short name
                     };
                     self.add_message(&format!("Model changed to: {}", self.current_model));
                 } else {
-                    self.add_message(&format!("Current model: {}", self.current_model));
+                    // Show model picker dialog
+                    self.show_model_picker = true;
+                    self.model_picker_selected = self.get_model_picker_index();
                 }
+            }
+            "/models" => {
+                // Show available models list
+                let models = self.get_available_models();
+                let mut output = String::from("# Available Models\n\n");
+                for (i, (name, model_id, description)) in models.iter().enumerate() {
+                    let current = if *model_id == self.current_model { " (current)" } else { "" };
+                    output.push_str(&format!("{}. **{}**{}\n   `{}`\n   {}\n\n",
+                        i + 1, name, current, model_id, description));
+                }
+                output.push_str("Use `/model <name>` to switch (e.g., `/model sonnet`)");
+                self.add_message(&output);
             }
             "/tools" => {
                 self.show_tool_panel = true;
@@ -2147,26 +2483,69 @@ impl AppState {
                 self.status_config_selected = 0;
             }
             "/compact" => {
-                // Clear conversation but keep summary (like JavaScript version)
-                if parts.len() > 1 {
-                    let summary = parts[1..].join(" ");
-                    self.compact_conversation_with_summary(&summary).await?;
-                } else {
-                    self.compact_conversation().await?;
+                // Execute PreCompact hooks before compacting
+                let compact_context = crate::hooks::HookContext::new(
+                    crate::hooks::HookType::PreCompact,
+                    &self.session_id,
+                );
+                let hook_results = crate::hooks::execute_hooks(
+                    crate::hooks::HookType::PreCompact,
+                    &compact_context,
+                ).await;
+
+                // Check if any hook wants to block compaction
+                let mut blocked = false;
+                for result in &hook_results {
+                    if result.stop_execution {
+                        let msg = result.stop_reason.clone()
+                            .unwrap_or_else(|| "Compact blocked by hook".to_string());
+                        self.add_message(&format!("Error: {}", msg));
+                        blocked = true;
+                        break;
+                    }
+                }
+
+                if !blocked {
+                    // Clear conversation but keep summary (like JavaScript version)
+                    if parts.len() > 1 {
+                        let summary = parts[1..].join(" ");
+                        self.compact_conversation_with_summary(&summary).await?;
+                    } else {
+                        self.compact_conversation().await?;
+                    }
                 }
             }
             "/context" => {
                 // Show current context usage with visual bar
-                let token_count = self.estimate_token_count();
-                let model_limit = self.get_model_token_limit();
-                let percentage = (token_count as f64 / model_limit as f64) * 100.0;
-                
+                // Try to get accurate token count from API, fall back to estimate
+                let (message_tokens, is_accurate) = match self.count_conversation_tokens().await {
+                    Ok(count) => (count, true),
+                    Err(_) => (self.estimate_token_count() as u64, false),
+                };
+
+                // Estimate system components (these would need separate API calls to be accurate)
+                let system_prompt_tokens: u64 = if let Some(ref prompt) = self.system_prompt {
+                    (prompt.len() as u64) / 4 // Rough estimate: 4 chars per token
+                } else {
+                    3100 // Default estimate
+                };
+                let tools_tokens: u64 = 11400; // Estimate for tool definitions
+                let memory_tokens: u64 = 2600; // Estimate for CLAUDE.md etc
+
+                let total_tokens = message_tokens + system_prompt_tokens + tools_tokens + memory_tokens;
+                let model_limit = self.get_model_token_limit() as u64;
+                let percentage = (total_tokens as f64 / model_limit as f64) * 100.0;
+                let message_percentage = (message_tokens as f64 / model_limit as f64) * 100.0;
+                let system_percentage = (system_prompt_tokens as f64 / model_limit as f64) * 100.0;
+                let tools_percentage = (tools_tokens as f64 / model_limit as f64) * 100.0;
+                let memory_percentage = (memory_tokens as f64 / model_limit as f64) * 100.0;
+
                 // Create visual representation like in JavaScript
                 let filled = ((percentage / 10.0) as usize).min(10);
                 let empty = 10 - filled;
-                
+
                 let mut output = String::new();
-                
+
                 // Visual bar with colored indicators
                 for _ in 0..filled {
                     output.push_str("⛁ ");
@@ -2175,7 +2554,7 @@ impl AppState {
                     output.push_str("⛶ ");
                 }
                 output.push_str("\n");
-                
+
                 // Repeat for multiple rows like in the JavaScript
                 for _ in 0..9 {
                     for _ in 0..filled {
@@ -2185,33 +2564,42 @@ impl AppState {
                         output.push_str("⛶ ");
                     }
                     output.push_str("  ");
-                    
+
                     // Add context info on the right side
+                    let accuracy_indicator = if is_accurate { "" } else { "~" };
                     match output.lines().count() {
-                        2 => output.push_str(&format!("Context Usage")),
-                        3 => output.push_str(&format!("{} • {}/{} tokens ({:.0}%)", 
-                            self.current_model, token_count, model_limit, percentage)),
-                        5 => output.push_str(&format!("⛁ System prompt: 3.1k tokens (1.6%)")),
-                        6 => output.push_str(&format!("⛁ System tools: 11.4k tokens (5.7%)")),
-                        7 => output.push_str(&format!("⛁ Memory files: 2.6k tokens (1.3%)")),
-                        8 => output.push_str(&format!("⛁ Messages: {:.1}k tokens ({:.1}%)", 
-                            token_count as f64 / 1000.0, percentage)),
-                        9 => output.push_str(&format!("⛶ Free space: {:.1}k ({:.1}%)", 
-                            (model_limit - token_count) as f64 / 1000.0, 100.0 - percentage)),
+                        2 => output.push_str("Context Usage"),
+                        3 => output.push_str(&format!("{} • {}{}/{} tokens ({:.0}%)",
+                            self.current_model, accuracy_indicator, total_tokens, model_limit, percentage)),
+                        5 => output.push_str(&format!("⛁ System prompt: ~{:.1}k tokens ({:.1}%)",
+                            system_prompt_tokens as f64 / 1000.0, system_percentage)),
+                        6 => output.push_str(&format!("⛁ System tools: ~{:.1}k tokens ({:.1}%)",
+                            tools_tokens as f64 / 1000.0, tools_percentage)),
+                        7 => output.push_str(&format!("⛁ Memory files: ~{:.1}k tokens ({:.1}%)",
+                            memory_tokens as f64 / 1000.0, memory_percentage)),
+                        8 => output.push_str(&format!("⛁ Messages: {}{:.1}k tokens ({:.1}%)",
+                            accuracy_indicator, message_tokens as f64 / 1000.0, message_percentage)),
+                        9 => output.push_str(&format!("⛶ Free space: {:.1}k ({:.1}%)",
+                            (model_limit - total_tokens) as f64 / 1000.0, 100.0 - percentage)),
                         _ => {},
                     }
                     output.push_str("\n");
                 }
-                
+
                 // Add Memory files section
                 output.push_str("\nMemory files · /memory\n");
-                output.push_str("└ Project                                                           2.6k tokens\n");
+                output.push_str(&format!("└ Project                                                           ~{:.1}k tokens\n",
+                    memory_tokens as f64 / 1000.0));
                 if let Some(memory_file) = std::env::var("CLAUDE_MD_PATH").ok() {
                     output.push_str(&format!("({}):", memory_file));
                 } else {
                     output.push_str("(CLAUDE.md):");
                 }
-                
+
+                if !is_accurate {
+                    output.push_str("\n\n~ indicates estimated values (API token counting unavailable)");
+                }
+
                 self.add_command_output(&output);
             }
             "/cost" => {
@@ -2424,30 +2812,111 @@ impl AppState {
                 }
             }
             "/doctor" => {
-                // System diagnostic check
-                self.add_message("Running system diagnostics...");
-                
-                // Check API key
-                if std::env::var("ANTHROPIC_API_KEY").is_ok() {
-                    self.add_message("✅ API key configured");
+                // Comprehensive system diagnostic check
+                let mut output = String::new();
+                output.push_str("# System Diagnostics\n\n");
+
+                // 1. Authentication
+                output.push_str("## Authentication\n");
+                let api_key_present = std::env::var("ANTHROPIC_API_KEY").is_ok();
+                if api_key_present {
+                    output.push_str("✅ API key: Configured\n");
                 } else {
-                    self.add_message("❌ API key not found");
+                    output.push_str("❌ API key: Not found (set ANTHROPIC_API_KEY)\n");
                 }
-                
-                // Check directories
-                self.add_message(&format!("✅ Config dir: {}", 
-                    dirs::config_dir().unwrap_or_default().display()));
-                self.add_message(&format!("✅ Data dir: {}", 
-                    dirs::data_local_dir().unwrap_or_default().display()));
-                
-                // Check tools
+
+                // 2. API Connectivity
+                output.push_str("\n## API Connectivity\n");
+                match crate::ai::create_client().await {
+                    Ok(_) => output.push_str("✅ Client initialization: Success\n"),
+                    Err(e) => output.push_str(&format!("❌ Client initialization: Failed - {}\n", e)),
+                }
+
+                // 3. Model Configuration
+                output.push_str("\n## Model\n");
+                output.push_str(&format!("✅ Current model: {}\n", self.current_model));
+                output.push_str(&format!("✅ Token limit: {} tokens\n", self.get_model_token_limit()));
+
+                // 4. Session Info
+                output.push_str("\n## Session\n");
+                output.push_str(&format!("✅ Session ID: {}\n", self.session_id));
+                output.push_str(&format!("✅ Messages in memory: {}\n", self.messages.len()));
+                output.push_str(&format!("✅ Estimated tokens: {}\n", self.estimate_token_count()));
+                output.push_str(&format!("✅ Message memory: {} KB\n", self.get_message_memory() / 1024));
+
+                // 5. Directories
+                output.push_str("\n## Directories\n");
+                let config_dir = dirs::config_dir().unwrap_or_default().join("claude");
+                let data_dir = dirs::data_local_dir().unwrap_or_default().join("claude");
+                let sessions_dir = data_dir.join("sessions");
+
+                output.push_str(&format!("✅ Config: {}\n", config_dir.display()));
+                output.push_str(&format!("✅ Data: {}\n", data_dir.display()));
+                if sessions_dir.exists() {
+                    let session_count = std::fs::read_dir(&sessions_dir)
+                        .map(|entries| entries.filter_map(|e| e.ok()).count())
+                        .unwrap_or(0);
+                    output.push_str(&format!("✅ Sessions dir: {} ({} saved sessions)\n",
+                        sessions_dir.display(), session_count));
+                } else {
+                    output.push_str(&format!("⚠️ Sessions dir: {} (not created yet)\n", sessions_dir.display()));
+                }
+
+                // Working directories
+                output.push_str(&format!("✅ Working directory: {}\n",
+                    std::env::current_dir().unwrap_or_default().display()));
+
+                // 6. Tools
+                output.push_str("\n## Tools\n");
                 let tool_executor = self.create_tool_executor();
                 let tools = tool_executor.get_available_tools();
-                self.add_message(&format!("✅ Available tools: {}", tools.len()));
-                
-                // Check memory
-                self.add_message(&format!("✅ Message memory: {} KB", 
-                    self.get_message_memory() / 1024));
+                output.push_str(&format!("✅ Available tools: {}\n", tools.len()));
+                let tool_names: Vec<_> = tools.iter().take(10).map(|t| t.name()).collect();
+                output.push_str(&format!("   {}{}\n",
+                    tool_names.join(", "),
+                    if tools.len() > 10 { format!("... (+{} more)", tools.len() - 10) } else { String::new() }
+                ));
+
+                // 7. MCP Servers
+                output.push_str("\n## MCP Servers\n");
+                if self.mcp_servers.is_empty() {
+                    output.push_str("⚠️ No MCP servers configured\n");
+                } else {
+                    for (name, _server) in &self.mcp_servers {
+                        output.push_str(&format!("✅ {}\n", name));
+                    }
+                }
+
+                // 8. Permissions
+                output.push_str("\n## Permissions\n");
+                {
+                    use crate::permissions::PERMISSION_CONTEXT;
+                    let ctx = PERMISSION_CONTEXT.lock().await;
+                    output.push_str(&format!("✅ Allowed directories: {}\n", ctx.allowed_directories.len()));
+                    let dirs: Vec<&std::path::PathBuf> = ctx.allowed_directories.iter().take(3).collect();
+                    for dir in &dirs {
+                        output.push_str(&format!("   - {}\n", dir.display()));
+                    }
+                    if ctx.allowed_directories.len() > 3 {
+                        output.push_str(&format!("   ... (+{} more)\n", ctx.allowed_directories.len() - 3));
+                    }
+                }
+
+                // 9. Environment
+                output.push_str("\n## Environment\n");
+                output.push_str(&format!("✅ OS: {} {}\n",
+                    std::env::consts::OS, std::env::consts::ARCH));
+                output.push_str(&format!("✅ Terminal size: {}x{}\n",
+                    self.terminal_size.0, self.terminal_size.1));
+                if let Ok(shell) = std::env::var("SHELL") {
+                    output.push_str(&format!("✅ Shell: {}\n", shell));
+                }
+
+                // 10. Version
+                output.push_str("\n## Version\n");
+                output.push_str(&format!("✅ Claude Code Rust v{}\n", env!("CARGO_PKG_VERSION")));
+
+                self.add_command_output(&output);
             }
             "/release-notes" => {
                 // Show release notes or version info
@@ -2455,9 +2924,26 @@ impl AppState {
                 self.add_message("A Rust implementation of Claude Code");
                 self.add_message("\nRecent changes:");
                 self.add_message("- Full tool execution through AI agent");
-                self.add_message("- Support for 16+ tools");  
+                self.add_message("- Support for 16+ tools");
                 self.add_message("- Jupyter notebook support");
                 self.add_message("- MCP server integration");
+            }
+            "/init" => {
+                // AI-powered CLAUDE.md generation
+                self.add_message("Analyzing your codebase...");
+                match self.run_init_command().await {
+                    Ok(_) => {},
+                    Err(e) => self.add_error(&format!("Init failed: {}", e)),
+                }
+            }
+            "/review" => {
+                // AI-powered PR code review
+                let pr_number = if parts.len() > 1 { Some(parts[1].to_string()) } else { None };
+                self.add_message("Reviewing pull request...");
+                match self.run_review_command(pr_number).await {
+                    Ok(_) => {},
+                    Err(e) => self.add_error(&format!("Review failed: {}", e)),
+                }
             }
             "/login" => {
                 // Check if already authenticated
@@ -2954,6 +3440,181 @@ impl AppState {
 
                 self.handle_plugin_command(&args).await;
             }
+            "/hooks" => {
+                // Show registered hooks - matches JavaScript implementation
+                let hook_count = crate::hooks::get_hook_count().await;
+
+                if hook_count == 0 {
+                    self.add_message("No hooks registered.");
+                    self.add_message("\nHooks allow custom commands to run at various points:");
+                    self.add_message("- SessionStart: When a new session is started");
+                    self.add_message("- SessionEnd: When a session ends");
+                    self.add_message("- PreToolUse: Before a tool is called");
+                    self.add_message("- PostToolUse: After a tool completes");
+                    self.add_message("- PreCompact: Before conversation compaction");
+                    self.add_message("- UserPromptSubmit: When user submits a prompt");
+                    self.add_message("\nConfigure hooks in .claude/settings.json or plugin manifests.");
+                } else {
+                    let registry = crate::hooks::HOOK_REGISTRY.read().await;
+                    let mut output = format!("Registered Hooks: {}\n\n", hook_count);
+
+                    for hook_type in crate::hooks::HookType::all() {
+                        let hooks = registry.get_hooks(hook_type);
+                        if !hooks.is_empty() {
+                            output.push_str(&format!("**{:?}** ({} hooks)\n", hook_type, hooks.len()));
+                            for entry in hooks {
+                                for cmd in &entry.hooks {
+                                    output.push_str(&format!("  - `{}`", cmd.command));
+                                    if let Some(ref plugin) = entry.plugin_name {
+                                        output.push_str(&format!(" (from {})", plugin));
+                                    }
+                                    output.push('\n');
+                                }
+                            }
+                            output.push('\n');
+                        }
+                    }
+
+                    self.add_message(&output);
+                }
+            }
+            "/bug" => {
+                // Open GitHub issue page - matches JavaScript implementation
+                self.add_message("**Report a Bug**\n");
+                self.add_message("To report a bug or issue, please visit:");
+                self.add_message("  https://github.com/anthropics/claude-code/issues\n");
+                self.add_message("When reporting, please include:");
+                self.add_message("- A description of what happened");
+                self.add_message("- Steps to reproduce the issue");
+                self.add_message(&format!("- Version: {}", env!("CARGO_PKG_VERSION")));
+                self.add_message(&format!("- OS: {} {}", std::env::consts::OS, std::env::consts::ARCH));
+                self.add_message(&format!("- Model: {}", self.current_model));
+
+                // Try to open in browser
+                let url = "https://github.com/anthropics/claude-code/issues/new";
+                #[cfg(target_os = "macos")]
+                {
+                    let _ = std::process::Command::new("open").arg(url).spawn();
+                }
+                #[cfg(target_os = "linux")]
+                {
+                    let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+                }
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = std::process::Command::new("cmd").args(["/c", "start", url]).spawn();
+                }
+            }
+            "/terminal-setup" => {
+                // Setup terminal keybindings for Shift+Enter - matches JavaScript
+                let terminal = std::env::var("TERM_PROGRAM").unwrap_or_else(|_| "unknown".to_string());
+                let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+
+                self.add_message("**Terminal Setup**\n");
+                self.add_message(&format!("Terminal: {}", terminal));
+                self.add_message(&format!("Shell: {}\n", shell));
+
+                match terminal.as_str() {
+                    "iTerm.app" => {
+                        self.add_message("To enable Shift+Enter for newlines in iTerm2:");
+                        self.add_message("1. Open iTerm2 Preferences (⌘,)");
+                        self.add_message("2. Go to Profiles > Keys > Key Mappings");
+                        self.add_message("3. Click '+' to add a new mapping");
+                        self.add_message("4. Set Keyboard Shortcut: Shift+Return");
+                        self.add_message("5. Set Action: Send Escape Sequence");
+                        self.add_message("6. Set Esc+: [13;2u");
+                    }
+                    "Apple_Terminal" => {
+                        self.add_message("To enable Option+Enter for newlines in Terminal.app:");
+                        self.add_message("1. Open Terminal Preferences (⌘,)");
+                        self.add_message("2. Go to Profiles > Keyboard");
+                        self.add_message("3. Check 'Use Option as Meta key'");
+                    }
+                    "vscode" | "VSCode" => {
+                        self.add_message("To enable Shift+Enter in VS Code terminal:");
+                        self.add_message("1. Open Keyboard Shortcuts (⌘K ⌘S)");
+                        self.add_message("2. Search for 'terminal.sendSequence'");
+                        self.add_message("3. Add Shift+Enter binding with args: {\"text\": \"\\u001b\\r\"}");
+                    }
+                    "Ghostty" => {
+                        self.add_message("Add to your Ghostty config:");
+                        self.add_message("  keybind = shift+enter=text:\\x1b\\r");
+                    }
+                    "WezTerm" => {
+                        self.add_message("Add to your wezterm.lua:");
+                        self.add_message("  {key=\"Enter\", mods=\"SHIFT\", action=wezterm.action{SendString=\"\\x1b\\r\"}},");
+                    }
+                    _ => {
+                        self.add_message("Generic terminal setup:");
+                        self.add_message("Configure your terminal to send ESC+Return (\\x1b\\r) for Shift+Enter.");
+                        self.add_message("This allows newlines in input without submitting.");
+                    }
+                }
+            }
+            "/export" => {
+                // Export conversation - matches JavaScript
+                let format = if parts.len() > 1 { parts[1] } else { "json" };
+
+                match format {
+                    "json" => {
+                        let export_data = serde_json::json!({
+                            "session_id": self.session_id,
+                            "model": self.current_model,
+                            "timestamp": crate::utils::timestamp_ms(),
+                            "messages": self.messages,
+                        });
+
+                        let filename = format!("conversation_{}.json", &self.session_id[..8]);
+                        let path = std::env::current_dir().unwrap_or_default().join(&filename);
+
+                        match std::fs::write(&path, serde_json::to_string_pretty(&export_data).unwrap_or_default()) {
+                            Ok(_) => self.add_message(&format!("✅ Exported to: {}", path.display())),
+                            Err(e) => self.add_error(&format!("Failed to export: {}", e)),
+                        }
+                    }
+                    "md" | "markdown" => {
+                        let mut md = String::new();
+                        md.push_str(&format!("# Conversation {}\n\n", &self.session_id[..8]));
+                        md.push_str(&format!("Model: {}\n\n", self.current_model));
+                        md.push_str("---\n\n");
+
+                        for msg in &self.messages {
+                            let role = match msg.role.as_str() {
+                                "user" => "**User**",
+                                "assistant" => "**Assistant**",
+                                "system" => "**System**",
+                                _ => &msg.role,
+                            };
+                            md.push_str(&format!("{}\n\n{}\n\n---\n\n", role, msg.content));
+                        }
+
+                        let filename = format!("conversation_{}.md", &self.session_id[..8]);
+                        let path = std::env::current_dir().unwrap_or_default().join(&filename);
+
+                        match std::fs::write(&path, &md) {
+                            Ok(_) => self.add_message(&format!("✅ Exported to: {}", path.display())),
+                            Err(e) => self.add_error(&format!("Failed to export: {}", e)),
+                        }
+                    }
+                    _ => {
+                        self.add_error(&format!("Unknown format: {}. Use 'json' or 'md'", format));
+                    }
+                }
+            }
+            "/rename" => {
+                // Rename conversation/session
+                if parts.len() > 1 {
+                    let new_name = parts[1..].join(" ");
+                    // Store session name in metadata
+                    self.session_name = Some(new_name.clone());
+                    self.add_message(&format!("✅ Session renamed to: {}", new_name));
+                } else {
+                    self.add_error("Usage: /rename <name>");
+                    if let Some(ref name) = self.session_name {
+                        self.add_message(&format!("Current name: {}", name));
+                    }
+                }
+            }
             _ => {
                 self.add_error(&format!("Unknown command: {}", parts[0]));
             }
@@ -2996,6 +3657,13 @@ impl AppState {
   /plugin [subcommand]     Plugin management (install, enable, marketplace)
   /plugins                 Alias for /plugin
   /status                  Show Claude Code status
+  /hooks                   Show registered hooks
+  /bug                     Report a bug (opens GitHub issues)
+  /terminal-setup          Setup terminal keybindings
+  /export [format]         Export conversation (json, md)
+  /rename <name>           Rename current session
+  /init                    AI-powered CLAUDE.md generation
+  /review [pr]             AI-powered PR review
   /exit, /quit             Exit application"#;
         
         self.add_command_output(help);
@@ -4076,10 +4744,40 @@ Other:
         self.should_exit = true;
     }
     
-    /// Clear messages
+    /// Clear messages and reset session state
+    /// This performs a full cleanup similar to JavaScript's /clear command
     pub fn clear_messages(&mut self) {
+        // Clear conversation messages
         self.messages.clear();
         self.scroll_offset = 0;
+
+        // Invalidate the rendered lines cache
+        self.invalidate_cache();
+
+        // Clear temporary state
+        self.pasted_contents.clear();
+        self.next_paste_id = 0;
+        self.last_paste_content = None;
+        self.paste_count = 0;
+
+        // Clear continuation state
+        self.continuation_messages = None;
+        self.hit_iteration_limit = false;
+
+        // Clear autocomplete state
+        self.autocomplete_matches.clear();
+        self.is_autocomplete_visible = false;
+        self.selected_suggestion = 0;
+
+        // Reset processing state
+        self.is_processing = false;
+
+        // Clear loaded AI messages from previous session
+        self.loaded_ai_messages = None;
+
+        // TODO: Execute SessionEnd hooks when hook system is implemented
+        // TODO: Execute SessionStart hooks when hook system is implemented
+        // TODO: Clear MCP context when MCP system tracks state
     }
     
     /// Compact conversation with automatic summary generation
@@ -4088,30 +4786,40 @@ Other:
             self.add_message("No conversation to compact");
             return Ok(());
         }
-        
-        // Generate summary of conversation
-        let summary = self.generate_conversation_summary();
-        
+
+        // Show progress message
+        self.add_message("Generating AI summary...");
+
+        // Generate summary of conversation using AI
+        let summary = match self.generate_conversation_summary_ai().await {
+            Ok(s) => s,
+            Err(e) => {
+                // Fallback to basic summary on error
+                self.add_message(&format!("AI summarization failed: {}. Using basic summary.", e));
+                self.generate_conversation_summary_basic()
+            }
+        };
+
         // Save current conversation before compacting
         self.save_conversation().await?;
-        
+
         // Clear messages except the first (system) and add summary
         let system_message = self.messages.first().cloned();
         self.messages.clear();
         self.scroll_offset = 0;
-        
+
         if let Some(system_msg) = system_message {
             self.messages.push(system_msg);
         }
-        
+
         // Add summary as a system message
         self.messages.push(Message {
             role: "assistant".to_string(),
             content: format!("**Conversation Summary:**\n\n{}", summary),
             timestamp: chrono::Utc::now().timestamp_millis() as u64,
         });
-        
-        self.add_message("✅ Conversation compacted with summary");
+
+        self.add_message("✅ Conversation compacted with AI summary");
         Ok(())
     }
     
@@ -4145,17 +4853,94 @@ Other:
         Ok(())
     }
     
-    /// Generate a summary of the current conversation
-    fn generate_conversation_summary(&self) -> String {
+    /// Generate a summary of the current conversation using AI
+    async fn generate_conversation_summary_ai(&self) -> Result<String> {
+        use crate::ai::summarization::{get_summarization_system_prompt, get_detailed_summary_prompt};
+
+        // Build conversation history for the AI
+        let mut ai_messages = Vec::new();
+
+        // Add conversation content as a single user message asking for summary
+        let mut conversation_text = String::new();
+        conversation_text.push_str("Please summarize the following conversation:\n\n");
+
+        for msg in &self.messages {
+            let role_label = match msg.role.as_str() {
+                "user" => "User",
+                "assistant" => "Assistant",
+                "system" => "System",
+                _ => &msg.role,
+            };
+            conversation_text.push_str(&format!("**{}**: {}\n\n", role_label, msg.content));
+        }
+
+        conversation_text.push_str("\n---\n\n");
+        conversation_text.push_str(&get_detailed_summary_prompt());
+
+        ai_messages.push(crate::ai::Message {
+            role: crate::ai::MessageRole::User,
+            content: crate::ai::MessageContent::Text(conversation_text),
+            name: None,
+        });
+
+        // Create AI client and request
+        let ai_client = crate::ai::create_client().await?;
+
+        let request = crate::ai::ChatRequest {
+            model: self.current_model.clone(),
+            messages: ai_messages,
+            max_tokens: Some(4096),
+            temperature: Some(0.3), // Lower temperature for more focused summaries
+            top_p: None,
+            top_k: None,
+            stop_sequences: None,
+            stream: Some(false),
+            system: Some(get_summarization_system_prompt().to_string()),
+            tools: None,
+            tool_choice: None,
+            metadata: None,
+            betas: None,
+        };
+
+        // Send request to AI
+        let response = ai_client.chat(request).await?;
+
+        // Extract text from response
+        let mut summary = String::new();
+        for part in response.content {
+            if let crate::ai::ContentPart::Text { text, .. } = part {
+                summary.push_str(&text);
+            }
+        }
+
+        // Extract just the summary portion if wrapped in <summary> tags
+        if let Some(start) = summary.find("<summary>") {
+            if let Some(end) = summary.find("</summary>") {
+                let start_idx = start + "<summary>".len();
+                if start_idx < end {
+                    summary = summary[start_idx..end].trim().to_string();
+                }
+            }
+        }
+
+        if summary.is_empty() {
+            return Err(crate::error::Error::Other("AI returned empty summary".to_string()));
+        }
+
+        Ok(summary)
+    }
+
+    /// Generate a basic summary of the current conversation (fallback)
+    fn generate_conversation_summary_basic(&self) -> String {
         if self.messages.len() <= 1 {
             return "Empty conversation".to_string();
         }
-        
+
         let mut summary = String::new();
         let mut user_messages = 0;
         let mut assistant_messages = 0;
         let mut topics = Vec::new();
-        
+
         // Count messages and extract key topics
         for message in &self.messages {
             match message.role.as_str() {
@@ -4171,22 +4956,320 @@ Other:
                 _ => {}
             }
         }
-        
-        summary.push_str(&format!("Conversation with {} user messages and {} assistant responses.\n\n", 
+
+        summary.push_str(&format!("Conversation with {} user messages and {} assistant responses.\n\n",
             user_messages, assistant_messages));
-        
+
         if !topics.is_empty() {
             summary.push_str("Topics discussed:\n");
             for (i, topic) in topics.iter().take(5).enumerate() {
                 summary.push_str(&format!("{}. {}\n", i + 1, topic));
             }
         }
-        
+
         summary.push_str("\n*This conversation was compacted to free up context space.*");
         summary
     }
-    
-    
+
+    /// Run /init command - AI-powered CLAUDE.md generation
+    /// Analyzes codebase and creates/updates CLAUDE.md with project-specific guidance
+    pub async fn run_init_command(&mut self) -> Result<()> {
+        // Gather context about the codebase
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let mut context = String::new();
+
+        // Check for existing CLAUDE.md
+        let claude_md_path = cwd.join("CLAUDE.md");
+        let existing_claude_md = if claude_md_path.exists() {
+            match tokio::fs::read_to_string(&claude_md_path).await {
+                Ok(content) => {
+                    context.push_str("## Existing CLAUDE.md\n```\n");
+                    context.push_str(&content);
+                    context.push_str("\n```\n\n");
+                    Some(content)
+                }
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+
+        // Check for README.md
+        let readme_path = cwd.join("README.md");
+        if readme_path.exists() {
+            if let Ok(content) = tokio::fs::read_to_string(&readme_path).await {
+                context.push_str("## README.md\n```\n");
+                // Truncate if too long
+                if content.len() > 8000 {
+                    context.push_str(&content[..8000]);
+                    context.push_str("\n... (truncated)\n");
+                } else {
+                    context.push_str(&content);
+                }
+                context.push_str("\n```\n\n");
+            }
+        }
+
+        // Check for package.json (Node.js projects)
+        let package_json_path = cwd.join("package.json");
+        if package_json_path.exists() {
+            if let Ok(content) = tokio::fs::read_to_string(&package_json_path).await {
+                context.push_str("## package.json\n```json\n");
+                context.push_str(&content);
+                context.push_str("\n```\n\n");
+            }
+        }
+
+        // Check for Cargo.toml (Rust projects)
+        let cargo_toml_path = cwd.join("Cargo.toml");
+        if cargo_toml_path.exists() {
+            if let Ok(content) = tokio::fs::read_to_string(&cargo_toml_path).await {
+                context.push_str("## Cargo.toml\n```toml\n");
+                context.push_str(&content);
+                context.push_str("\n```\n\n");
+            }
+        }
+
+        // Check for Makefile
+        let makefile_path = cwd.join("Makefile");
+        if makefile_path.exists() {
+            if let Ok(content) = tokio::fs::read_to_string(&makefile_path).await {
+                context.push_str("## Makefile\n```makefile\n");
+                if content.len() > 4000 {
+                    context.push_str(&content[..4000]);
+                    context.push_str("\n... (truncated)\n");
+                } else {
+                    context.push_str(&content);
+                }
+                context.push_str("\n```\n\n");
+            }
+        }
+
+        // Check for .cursorrules
+        let cursorrules_path = cwd.join(".cursorrules");
+        if cursorrules_path.exists() {
+            if let Ok(content) = tokio::fs::read_to_string(&cursorrules_path).await {
+                context.push_str("## .cursorrules\n```\n");
+                context.push_str(&content);
+                context.push_str("\n```\n\n");
+            }
+        }
+
+        // Build AI prompt
+        let system_prompt = r#"You are an expert at analyzing codebases and creating documentation.
+
+Your task is to create a CLAUDE.md file that will be given to future instances of Claude Code to help them work effectively in this repository.
+
+What to include:
+1. Commands commonly used for building, linting, and running tests. Include how to run a single test.
+2. High-level code architecture and structure - the "big picture" that requires reading multiple files to understand.
+
+What to avoid:
+- Obvious instructions like "Provide helpful error messages" or "Write unit tests"
+- Listing every file/component that can be easily discovered
+- Generic development practices
+- Made-up information not from actual project files
+
+Start the file with:
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository."#;
+
+        let user_prompt = if existing_claude_md.is_some() {
+            format!("Here is context about the codebase. Please suggest improvements to the existing CLAUDE.md:\n\n{}", context)
+        } else {
+            format!("Here is context about the codebase. Please create a CLAUDE.md file:\n\n{}", context)
+        };
+
+        // Build AI messages
+        let ai_messages = vec![crate::ai::Message {
+            role: crate::ai::MessageRole::User,
+            content: crate::ai::MessageContent::Text(user_prompt),
+            name: None,
+        }];
+
+        // Create AI client and request
+        let ai_client = crate::ai::create_client().await?;
+
+        let request = crate::ai::ChatRequest {
+            model: self.current_model.clone(),
+            messages: ai_messages,
+            max_tokens: Some(4096),
+            temperature: Some(0.3),
+            top_p: None,
+            top_k: None,
+            stop_sequences: None,
+            stream: Some(false),
+            system: Some(system_prompt.to_string()),
+            tools: None,
+            tool_choice: None,
+            metadata: None,
+            betas: None,
+        };
+
+        // Send request
+        let response = ai_client.chat(request).await?;
+
+        // Extract text from response
+        let mut claude_md_content = String::new();
+        for part in response.content {
+            if let crate::ai::ContentPart::Text { text, .. } = part {
+                claude_md_content.push_str(&text);
+            }
+        }
+
+        if claude_md_content.is_empty() {
+            self.add_error("AI returned empty response");
+            return Ok(());
+        }
+
+        // Write to CLAUDE.md
+        tokio::fs::write(&claude_md_path, &claude_md_content).await?;
+
+        self.add_message(&format!("✅ Created/updated CLAUDE.md ({} bytes)", claude_md_content.len()));
+        self.add_message(&format!("   Location: {}", claude_md_path.display()));
+
+        Ok(())
+    }
+
+    /// Run /review command - AI-powered PR code review
+    /// Reviews a pull request using gh CLI and AI analysis
+    pub async fn run_review_command(&mut self, pr_number: Option<String>) -> Result<()> {
+        // Check if gh CLI is available
+        let gh_check = tokio::process::Command::new("gh")
+            .arg("--version")
+            .output()
+            .await;
+
+        if gh_check.is_err() {
+            self.add_error("gh CLI not found. Please install GitHub CLI: https://cli.github.com/");
+            return Ok(());
+        }
+
+        // If no PR number, list open PRs
+        let pr_num = match pr_number {
+            Some(num) => num,
+            None => {
+                // List open PRs
+                let pr_list = tokio::process::Command::new("gh")
+                    .args(["pr", "list", "--limit", "10"])
+                    .output()
+                    .await?;
+
+                let list_output = String::from_utf8_lossy(&pr_list.stdout);
+                if list_output.trim().is_empty() {
+                    self.add_message("No open pull requests found.");
+                    return Ok(());
+                }
+
+                self.add_message("**Open Pull Requests:**");
+                self.add_message(&list_output);
+                self.add_message("\nUse `/review <pr-number>` to review a specific PR.");
+                return Ok(());
+            }
+        };
+
+        // Get PR details
+        self.add_message(&format!("Fetching PR #{}...", pr_num));
+
+        let pr_view = tokio::process::Command::new("gh")
+            .args(["pr", "view", &pr_num, "--json", "title,body,author,additions,deletions,files"])
+            .output()
+            .await?;
+
+        if !pr_view.status.success() {
+            let stderr = String::from_utf8_lossy(&pr_view.stderr);
+            self.add_error(&format!("Failed to get PR details: {}", stderr));
+            return Ok(());
+        }
+
+        let pr_details = String::from_utf8_lossy(&pr_view.stdout);
+
+        // Get PR diff
+        let pr_diff = tokio::process::Command::new("gh")
+            .args(["pr", "diff", &pr_num])
+            .output()
+            .await?;
+
+        let diff_content = String::from_utf8_lossy(&pr_diff.stdout);
+
+        // Truncate diff if too large
+        let diff_truncated = if diff_content.len() > 50000 {
+            format!("{}...\n\n[Diff truncated - {} total bytes]", &diff_content[..50000], diff_content.len())
+        } else {
+            diff_content.to_string()
+        };
+
+        // Build AI prompt for code review
+        let system_prompt = r#"You are an expert code reviewer. Analyze the pull request and provide a thorough code review.
+
+Focus on:
+- Code correctness and potential bugs
+- Following project conventions
+- Performance implications
+- Test coverage
+- Security considerations
+
+Format your review with clear sections:
+## Overview
+## Code Quality
+## Potential Issues
+## Suggestions
+## Security Considerations (if any)"#;
+
+        let user_prompt = format!(
+            "Please review this pull request:\n\n## PR Details\n```json\n{}\n```\n\n## Diff\n```diff\n{}\n```",
+            pr_details, diff_truncated
+        );
+
+        // Build AI messages
+        let ai_messages = vec![crate::ai::Message {
+            role: crate::ai::MessageRole::User,
+            content: crate::ai::MessageContent::Text(user_prompt),
+            name: None,
+        }];
+
+        // Create AI client and request
+        let ai_client = crate::ai::create_client().await?;
+
+        let request = crate::ai::ChatRequest {
+            model: self.current_model.clone(),
+            messages: ai_messages,
+            max_tokens: Some(4096),
+            temperature: Some(0.3),
+            top_p: None,
+            top_k: None,
+            stop_sequences: None,
+            stream: Some(false),
+            system: Some(system_prompt.to_string()),
+            tools: None,
+            tool_choice: None,
+            metadata: None,
+            betas: None,
+        };
+
+        // Send request
+        self.add_message("Analyzing changes...");
+        let response = ai_client.chat(request).await?;
+
+        // Extract text from response
+        let mut review = String::new();
+        for part in response.content {
+            if let crate::ai::ContentPart::Text { text, .. } = part {
+                review.push_str(&text);
+            }
+        }
+
+        if review.is_empty() {
+            self.add_error("AI returned empty review");
+            return Ok(());
+        }
+
+        self.add_message(&format!("**Code Review for PR #{}**\n\n{}", pr_num, review));
+
+        Ok(())
+    }
+
     /// Toggle help
     pub fn toggle_help(&mut self) {
         self.show_help = !self.show_help;
@@ -4201,7 +5284,61 @@ Other:
     pub fn toggle_tool_panel(&mut self) {
         self.show_tool_panel = !self.show_tool_panel;
     }
-    
+
+    /// Toggle prompt stash (Ctrl+S)
+    /// Matches JavaScript behavior at line 480754:
+    /// - If input is empty and stash exists: restore from stash
+    /// - If input has content: save to stash and clear input
+    pub fn toggle_prompt_stash(&mut self) {
+        let current_input: String = self.input_textarea.lines().join("\n");
+        let cursor_pos = self.input_textarea.cursor().1;
+
+        if current_input.trim().is_empty() {
+            // Restore from stash if exists
+            if let Some((stashed_text, _cursor_offset)) = self.stashed_input.take() {
+                self.input_textarea = create_configured_textarea_with_content(stashed_text.lines());
+                self.add_message("Restored input from stash");
+            }
+        } else {
+            // Save to stash and clear
+            self.stashed_input = Some((current_input, cursor_pos));
+            self.input_textarea = create_configured_textarea();
+            self.add_message("Input stashed (Ctrl+S to restore)");
+        }
+    }
+
+    /// Toggle TODOs expanded display (Ctrl+T)
+    /// Matches JavaScript behavior at line 481215
+    pub fn toggle_todos_display(&mut self) {
+        self.show_todos_expanded = !self.show_todos_expanded;
+    }
+
+    /// Toggle find/search mode (Ctrl+F)
+    pub fn toggle_find_mode(&mut self) {
+        self.show_find_mode = !self.show_find_mode;
+        if !self.show_find_mode {
+            // Clear search state when closing
+            self.find_query.clear();
+            self.find_results.clear();
+            self.find_current_index = 0;
+        }
+    }
+
+    /// Set thinking state (for interleaved thinking display)
+    pub fn set_thinking(&mut self, thinking: Option<String>) {
+        if thinking.is_some() && self.thinking_start_time.is_none() {
+            self.thinking_start_time = Some(std::time::Instant::now());
+        } else if thinking.is_none() {
+            self.thinking_start_time = None;
+        }
+        self.current_thinking = thinking;
+    }
+
+    /// Get thinking duration in seconds
+    pub fn get_thinking_duration_secs(&self) -> Option<u64> {
+        self.thinking_start_time.map(|start| start.elapsed().as_secs())
+    }
+
     /// Cancel operation
     pub async fn cancel_operation(&mut self) -> Result<()> {
         // Show cancelling status
@@ -4299,10 +5436,31 @@ Other:
     pub fn set_task_status(&mut self, status: Option<String>) {
         if status.is_none() {
             self.spinner_frame = 0;
+            self.current_progress = None;
         }
         self.current_task_status = status;
     }
-    
+
+    /// Set determinate progress (0.0 to 1.0)
+    /// Matches JavaScript progress bar behavior at line 477030
+    pub fn set_progress(&mut self, progress: f64) {
+        self.current_progress = Some(progress.clamp(0.0, 1.0));
+    }
+
+    /// Clear progress (back to indeterminate)
+    pub fn clear_progress(&mut self) {
+        self.current_progress = None;
+    }
+
+    /// Get current progress for display
+    pub fn get_progress(&self) -> Option<f64> {
+        if self.terminal_progress_bar_enabled {
+            self.current_progress
+        } else {
+            None
+        }
+    }
+
     /// Add to history
     fn add_to_history(&mut self, command: String) {
         self.command_history.push_front(command);
@@ -4325,20 +5483,20 @@ Other:
         
         self.history_index = Some(new_index);
         if let Some(cmd) = self.command_history.get(new_index) {
-            self.input_textarea = TextArea::from(cmd.lines());
+            self.input_textarea = create_configured_textarea_with_content(cmd.lines());
         }
     }
-    
+
     /// History down
     pub fn history_down(&mut self) {
         if let Some(index) = self.history_index {
             if index == 0 {
                 self.history_index = None;
-                self.input_textarea = TextArea::default();
+                self.input_textarea = create_configured_textarea();
             } else {
                 self.history_index = Some(index - 1);
                 if let Some(cmd) = self.command_history.get(index - 1) {
-                    self.input_textarea = TextArea::from(cmd.lines());
+                    self.input_textarea = create_configured_textarea_with_content(cmd.lines());
                 }
             }
         }
@@ -4476,7 +5634,44 @@ Other:
         }
         total
     }
-    
+
+    /// Count conversation tokens using the Anthropic API
+    /// Returns accurate token count for the messages in this conversation
+    pub async fn count_conversation_tokens(&self) -> crate::error::Result<u64> {
+        // Skip if no messages to count
+        if self.messages.is_empty() {
+            return Ok(0);
+        }
+
+        // Build AI messages from UI messages
+        let mut ai_messages = Vec::new();
+        for msg in &self.messages {
+            let role = match msg.role.as_str() {
+                "user" => crate::ai::MessageRole::User,
+                "assistant" => crate::ai::MessageRole::Assistant,
+                _ => continue, // Skip system messages for now
+            };
+            ai_messages.push(crate::ai::Message {
+                role,
+                content: crate::ai::MessageContent::Text(msg.content.clone()),
+                name: None,
+            });
+        }
+
+        // Create request
+        let request = crate::auth::client::CountTokensRequest {
+            model: self.current_model.clone(),
+            messages: ai_messages,
+            betas: None,
+        };
+
+        // Get client and count tokens
+        let client = crate::ai::create_client().await?;
+        let response = client.count_tokens(request).await?;
+
+        Ok(response.input_tokens)
+    }
+
     pub fn get_model_token_limit(&self) -> usize {
         if self.current_model.contains("opus") {
             200000
@@ -4488,7 +5683,36 @@ Other:
             100000
         }
     }
-    
+
+    /// Get list of available models with names, IDs, and descriptions
+    pub fn get_available_models(&self) -> Vec<(&'static str, &'static str, &'static str)> {
+        vec![
+            ("Opus 4.5", "claude-opus-4-5-20251101", "Most capable model, best for complex tasks"),
+            ("Opus 4.1", "claude-opus-4-1-20250805", "Previous Opus version"),
+            ("Sonnet 4.5", "claude-sonnet-4-5-20250929", "Balanced speed and capability"),
+            ("Sonnet 4", "claude-sonnet-4-20250514", "Previous Sonnet version"),
+            ("Haiku 4.5", "claude-haiku-4-5-20251001", "Fastest model, best for simple tasks"),
+        ]
+    }
+
+    /// Get the index of the current model in the available models list
+    pub fn get_model_picker_index(&self) -> usize {
+        let models = self.get_available_models();
+        models.iter()
+            .position(|(_, id, _)| *id == self.current_model)
+            .unwrap_or(0)
+    }
+
+    /// Select a model from the picker by index
+    pub fn select_model_by_index(&mut self, index: usize) {
+        let models = self.get_available_models();
+        if index < models.len() {
+            self.current_model = models[index].1.to_string();
+            self.add_message(&format!("Model changed to: {} ({})", models[index].0, models[index].1));
+        }
+        self.show_model_picker = false;
+    }
+
     pub fn format_relative_time(&self, timestamp: u64) -> String {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -5155,6 +6379,22 @@ Other:
                 command_type: "local".to_string(),
                 is_enabled: true,
             },
+            CommandInfo {
+                name: "init".to_string(),
+                aliases: vec![],
+                description: "Create CLAUDE.md with AI-powered codebase analysis".to_string(),
+                argument_hint: None,
+                command_type: "prompt".to_string(),
+                is_enabled: true,
+            },
+            CommandInfo {
+                name: "review".to_string(),
+                aliases: vec![],
+                description: "AI-powered pull request code review".to_string(),
+                argument_hint: Some("[pr-number]".to_string()),
+                command_type: "prompt".to_string(),
+                is_enabled: true,
+            },
         ]
     }
 
@@ -5333,19 +6573,17 @@ Other:
     pub fn autocomplete_select_current(&mut self) {
         if let Some(selected_match) = self.autocomplete_matches.get(self.selected_suggestion) {
             let command_text = format!("/{}", selected_match.command.name);
-            
-            // Add argument hint if it exists
-            if let Some(hint) = &selected_match.command.argument_hint {
-                self.input_textarea.delete_line_by_head();
-                self.input_textarea.insert_str(&format!("{} {}", command_text, hint));
-                // Position cursor before the hint
-                let cursor_pos = command_text.len() + 1;
-                self.input_textarea.move_cursor(tui_textarea::CursorMove::Jump(0, cursor_pos as u16));
-            } else {
-                self.input_textarea.delete_line_by_head();  
-                self.input_textarea.insert_str(&command_text);
+
+            // Clear and insert just the command (NOT the argument hint)
+            // The hint is for display only, not to be inserted as text
+            self.input_textarea.delete_line_by_head();
+            self.input_textarea.insert_str(&command_text);
+
+            // Add a space after if the command takes arguments
+            if selected_match.command.argument_hint.is_some() {
+                self.input_textarea.insert_str(" ");
             }
-            
+
             self.is_autocomplete_visible = false;
             self.autocomplete_matches.clear();
         }
@@ -5356,6 +6594,84 @@ Other:
         self.is_autocomplete_visible = false;
         self.autocomplete_matches.clear();
         self.selected_suggestion = 0;
+    }
+
+    /// Extract selected text from chat display based on selection coordinates
+    pub fn extract_selected_text(&self, start: (usize, usize), end: (usize, usize)) -> String {
+        // Normalize start and end so start is always before end
+        let (start, end) = if start.0 < end.0 || (start.0 == end.0 && start.1 <= end.1) {
+            (start, end)
+        } else {
+            (end, start)
+        };
+
+        let mut result = String::new();
+
+        // Use cached lines if available
+        let lines = &self.rendered_lines_cache;
+        if lines.is_empty() {
+            return result;
+        }
+
+        for (line_idx, line) in lines.iter().enumerate() {
+            if line_idx < start.0 || line_idx > end.0 {
+                continue;
+            }
+
+            // Extract text from this line's spans
+            let line_text: String = line.spans.iter()
+                .map(|span| span.content.as_ref())
+                .collect();
+
+            if line_idx == start.0 && line_idx == end.0 {
+                // Selection within a single line
+                let start_col = start.1.min(line_text.len());
+                let end_col = end.1.min(line_text.len());
+                if start_col < end_col {
+                    result.push_str(&line_text[start_col..end_col]);
+                }
+            } else if line_idx == start.0 {
+                // First line of multi-line selection
+                let start_col = start.1.min(line_text.len());
+                result.push_str(&line_text[start_col..]);
+                result.push('\n');
+            } else if line_idx == end.0 {
+                // Last line of multi-line selection
+                let end_col = end.1.min(line_text.len());
+                result.push_str(&line_text[..end_col]);
+            } else {
+                // Middle line - include entire line
+                result.push_str(&line_text);
+                result.push('\n');
+            }
+        }
+
+        result
+    }
+
+    /// Copy chat selection to clipboard
+    pub fn copy_chat_selection(&mut self) -> bool {
+        if let Some(ref text) = self.chat_selected_text {
+            if !text.is_empty() {
+                // Try to copy to clipboard using arboard
+                if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                    if clipboard.set_text(text.clone()).is_ok() {
+                        self.add_message(&format!("Copied {} characters to clipboard", text.len()));
+                        return true;
+                    }
+                }
+                self.add_message("Failed to copy to clipboard");
+            }
+        }
+        false
+    }
+
+    /// Clear chat selection
+    pub fn clear_chat_selection(&mut self) {
+        self.chat_selection_start = None;
+        self.chat_selection_end = None;
+        self.chat_is_selecting = false;
+        self.chat_selected_text = None;
     }
 }
 

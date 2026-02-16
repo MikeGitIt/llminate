@@ -1,5 +1,6 @@
 use crate::error::{Error, Result};
 use crate::mcp;
+use crate::progress::create_progress_spinner;
 use crate::telemetry;
 use crate::ai::streaming::{StreamEvent as AIStreamEvent, StreamDelta};
 use crate::ai::client::ContentDelta;
@@ -370,20 +371,20 @@ fn build_system_prompt(options: &PrintOptions) -> Result<String> {
 /// Process text output
 async fn process_text_output(context: &mut ConversationContext, input: &str) -> Result<()> {
     context.add_user_message(input);
-    
+
     // Create AI client
     let ai_client = crate::ai::create_client().await?;
-    
+
     // Build request
     let mut request = ai_client
         .create_chat_request()
         .messages(context.get_ai_messages())
         .max_tokens(4096);
-    
+
     if let Some(system) = &context.options.system_prompt {
         request = request.system(system.clone());
     }
-    
+
     // Add tools if not disabled
     if !context.options.dangerously_skip_permissions {
         let tool_executor = crate::ai::tools::ToolExecutor::new();
@@ -392,9 +393,15 @@ async fn process_text_output(context: &mut ConversationContext, input: &str) -> 
             request = request.tools(tools);
         }
     }
-    
+
+    // Show spinner while waiting for response
+    let progress = create_progress_spinner("Thinking...");
+
     // Send request
     let response = ai_client.chat(request.build()).await?;
+
+    // Finish progress bar
+    progress.finish_and_clear();
     
     // Process response
     let mut response_text = String::new();
@@ -406,17 +413,22 @@ async fn process_text_output(context: &mut ConversationContext, input: &str) -> 
             }
             crate::ai::ContentPart::ToolUse { name, input, .. } => {
                 response_text.push_str(&format!("\n[Tool: {}]\n", name));
-                
+
                 // Execute tool if allowed
                 if !context.options.dangerously_skip_permissions {
+                    // Show spinner for tool execution
+                    let tool_progress = create_progress_spinner(format!("Executing {}...", name));
+
                     let tool_executor = crate::ai::tools::ToolExecutor::new();
                     match tool_executor.execute(name, input.clone()).await {
                         Ok(result) => {
+                            tool_progress.finish_and_clear();
                             if let crate::ai::ContentPart::ToolResult { content, .. } = result {
                                 response_text.push_str(&format!("Result: {}\n", content));
                             }
                         }
                         Err(e) => {
+                            tool_progress.abandon_with_message("Failed");
                             response_text.push_str(&format!("Error: {}\n", e));
                         }
                     }
@@ -435,20 +447,20 @@ async fn process_text_output(context: &mut ConversationContext, input: &str) -> 
 /// Process JSON output
 async fn process_json_output(context: &mut ConversationContext, input: &str) -> Result<()> {
     context.add_user_message(input);
-    
+
     // Create AI client
     let ai_client = crate::ai::create_client().await?;
-    
+
     // Build request
     let mut request = ai_client
         .create_chat_request()
         .messages(context.get_ai_messages())
         .max_tokens(4096);
-    
+
     if let Some(system) = &context.options.system_prompt {
         request = request.system(system.clone());
     }
-    
+
     // Add tools if not disabled
     if !context.options.dangerously_skip_permissions {
         let tool_executor = crate::ai::tools::ToolExecutor::new();
@@ -457,9 +469,15 @@ async fn process_json_output(context: &mut ConversationContext, input: &str) -> 
             request = request.tools(tools);
         }
     }
-    
+
+    // Show spinner while waiting for response
+    let progress = create_progress_spinner("Processing...");
+
     // Send request
     let response = ai_client.chat(request.build()).await?;
+
+    // Finish progress bar
+    progress.finish_and_clear();
     
     // Convert response to JSON format
     let mut response_messages = Vec::new();
@@ -474,10 +492,16 @@ async fn process_json_output(context: &mut ConversationContext, input: &str) -> 
                     error: None,
                 });
             }
-            crate::ai::ContentPart::ToolUse { id, name, input } => {
+            crate::ai::ContentPart::ToolUse { id: _, name, input } => {
                 let tool_output = if !context.options.dangerously_skip_permissions {
+                    // Show spinner for tool execution
+                    let tool_progress = create_progress_spinner(format!("Executing {}...", name));
+
                     let tool_executor = crate::ai::tools::ToolExecutor::new();
-                    match tool_executor.execute(name, input.clone()).await {
+                    let result = tool_executor.execute(name, input.clone()).await;
+                    tool_progress.finish_and_clear();
+
+                    match result {
                         Ok(result) => {
                             if let crate::ai::ContentPart::ToolResult { content, .. } = result {
                                 Some(serde_json::json!({ "result": content }))
@@ -538,7 +562,10 @@ async fn process_json_output(context: &mut ConversationContext, input: &str) -> 
 async fn process_stream_json_output(context: &mut ConversationContext, input: &str) -> Result<()> {
     let stdout = tokio::io::stdout();
     let mut writer = tokio::io::BufWriter::new(stdout);
-    
+
+    // Show spinner during initial connection
+    let progress = create_progress_spinner("Connecting...");
+
     // Send start event
     let start_event = StreamEvent::Start {
         session_id: context.session_id.clone(),
@@ -584,9 +611,13 @@ async fn process_stream_json_output(context: &mut ConversationContext, input: &s
     
     // Send request and stream response
     let stream = ai_client.chat_stream(request.build()).await?;
+
+    // Finish the connection spinner - streaming has started
+    progress.finish_and_clear();
+
     let mut stream = Box::pin(stream);
     let mut accumulated_text = String::new();
-    
+
     while let Some(event) = stream.next().await {
         match event {
             Ok(chunk) => {
@@ -612,7 +643,7 @@ async fn process_stream_json_output(context: &mut ConversationContext, input: &s
                         match delta {
                             ContentDelta::TextDelta { text } => {
                                 accumulated_text.push_str(&text);
-                                
+
                                 // Send text delta
                                 let message_event = StreamEvent::Message {
                                     role: "assistant".to_string(),
@@ -623,13 +654,19 @@ async fn process_stream_json_output(context: &mut ConversationContext, input: &s
                                 writer.flush().await?;
                             }
                             ContentDelta::InputJsonDelta { .. } => {}
+                            ContentDelta::ThinkingDelta { .. } => {
+                                // Thinking deltas not displayed in print mode
+                            }
+                            ContentDelta::SignatureDelta { .. } => {
+                                // Signature deltas are internal
+                            }
                         }
                     }
                     AIStreamEvent::ContentBlockStop { .. } => {},
                     AIStreamEvent::MessageStart { .. } => {},
                     AIStreamEvent::MessageDelta { .. } => {},
                     AIStreamEvent::MessageStop => {},
-                    AIStreamEvent::ToolUseStart { id, name } => {
+                    AIStreamEvent::ToolUseStart { id: _, name } => {
                         let tool_event = StreamEvent::ToolUse {
                             name: name.clone(),
                             input: serde_json::Value::Null,
@@ -639,10 +676,16 @@ async fn process_stream_json_output(context: &mut ConversationContext, input: &s
                         writer.flush().await?;
                     }
                     AIStreamEvent::ToolUseDelta { .. } => {},
-                    AIStreamEvent::ToolUseStop { id, name, input } => {
+                    AIStreamEvent::ToolUseStop { id: _, name, input } => {
                         if !context.options.dangerously_skip_permissions {
+                            // Show spinner for tool execution
+                            let tool_progress = create_progress_spinner(format!("Executing {}...", name));
+
                             let tool_executor = crate::ai::tools::ToolExecutor::new();
-                            match tool_executor.execute(&name, input.clone()).await {
+                            let result = tool_executor.execute(&name, input.clone()).await;
+                            tool_progress.finish_and_clear();
+
+                            match result {
                                 Ok(result) => {
                                     if let crate::ai::ContentPart::ToolResult { content, .. } = result {
                                         let result_event = StreamEvent::ToolResult {

@@ -141,7 +141,10 @@ pub struct Config {
     // Terminal settings
     pub has_used_backslash_return: Option<bool>,
     pub iterm2_backup_path: Option<String>,
-    
+
+    // Progress bar settings (matches JavaScript terminalProgressBarEnabled)
+    pub terminal_progress_bar_enabled: Option<bool>,
+
     // Dynamic fields
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
@@ -308,6 +311,7 @@ impl Default for Config {
             cached_changelog: None,
             has_used_backslash_return: Some(false),
             iterm2_backup_path: None,
+            terminal_progress_bar_enabled: Some(true),
             extra: HashMap::new(),
         }
     }

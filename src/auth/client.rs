@@ -46,6 +46,27 @@ lazy_static::lazy_static! {
     };
 }
 
+/// Token counting request - matches JavaScript countTokens() parameters
+/// JavaScript reference (cli-jsdef-fixed.js:272927-272945)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CountTokensRequest {
+    /// Model name
+    pub model: String,
+    /// Messages to count tokens for
+    pub messages: Vec<crate::ai::Message>,
+    /// Optional betas to include in header
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub betas: Option<Vec<String>>,
+}
+
+/// Token counting response
+/// JavaScript returns: { input_tokens: number }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CountTokensResponse {
+    /// The number of input tokens
+    pub input_tokens: u64,
+}
+
 // Error types matching JavaScript error classes exactly
 #[derive(Debug, thiserror::Error)]
 pub enum AnthropicError {
@@ -912,6 +933,74 @@ impl AnthropicClient {
 
         let stream = response.bytes_stream();
         Ok(parse_sse_stream(stream))
+    }
+
+    /// Count tokens for a message request - matches JavaScript countTokens() method
+    /// Endpoint: /v1/messages/count_tokens?beta=true
+    /// Header: anthropic-beta: token-counting-2024-11-01
+    ///
+    /// JavaScript reference (cli-jsdef-fixed.js:371525-371537):
+    /// countTokens(A, B) {
+    ///     let { betas: Q, ...Z } = A;
+    ///     return this._client.post("/v1/messages/count_tokens?beta=true", {
+    ///         body: Z,
+    ///         headers: { "anthropic-beta": ["token-counting-2024-11-01", ...betas].toString() }
+    ///     });
+    /// }
+    pub async fn count_tokens(&self, request: &CountTokensRequest) -> Result<CountTokensResponse> {
+        // Build headers with token-counting beta
+        let mut headers = HeaderMap::new();
+        headers.insert("accept", HeaderValue::from_static("application/json"));
+        headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
+        headers.insert("content-type", HeaderValue::from_static("application/json"));
+        headers.insert("x-app", HeaderValue::from_static("cli"));
+
+        // Add token-counting beta header
+        let beta_value = if let Some(ref betas) = request.betas {
+            let mut beta_list = vec!["token-counting-2024-11-01".to_string()];
+            beta_list.extend(betas.iter().cloned());
+            beta_list.join(",")
+        } else {
+            "token-counting-2024-11-01".to_string()
+        };
+        headers.insert(
+            "anthropic-beta",
+            HeaderValue::from_str(&beta_value).context("Invalid beta header value")?,
+        );
+
+        // Add API key auth
+        if let Some(ref api_key) = self.config.api_key {
+            headers.insert(
+                "x-api-key",
+                HeaderValue::from_str(api_key).context("Invalid API key")?,
+            );
+        }
+
+        // Build request body (exclude betas as they go in header)
+        let body = json!({
+            "model": request.model,
+            "messages": request.messages
+        });
+
+        let url = format!("{}/v1/messages/count_tokens?beta=true", self.config.base_url);
+
+        let response = self
+            .http_client
+            .post(&url)
+            .headers(headers)
+            .json(&body)
+            .send()
+            .await
+            .context("Failed to send count_tokens request")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_else(|_| "Failed to read error".to_string());
+            return Err(anyhow!("count_tokens failed with status {}: {}", status, text));
+        }
+
+        let result: CountTokensResponse = response.json().await.context("Failed to parse count_tokens response")?;
+        Ok(result)
     }
 
     // ===== Helper methods for OAuth metadata (matching JavaScript behavior) =====

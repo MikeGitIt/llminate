@@ -11,7 +11,7 @@ async fn test_bash_tool_basic_command() {
         "command": "echo 'Hello World'"
     });
     
-    let result = bash_tool.execute(input).await;
+    let result = bash_tool.execute(input, None).await;
     assert!(result.is_ok(), "Basic bash command should succeed");
     
     let output = result.unwrap();
@@ -34,7 +34,7 @@ async fn test_bash_tool_persistent_session_basic_mode() {
         "shell_id": "test_session"
     });
     
-    let result1 = bash_tool.execute(input1).await;
+    let result1 = bash_tool.execute(input1, None).await;
     assert!(result1.is_ok(), "First command should succeed");
     
     // Second command - variable should NOT persist in basic mode
@@ -43,7 +43,7 @@ async fn test_bash_tool_persistent_session_basic_mode() {
         "shell_id": "test_session"
     });
     
-    let result2 = bash_tool.execute(input2).await;
+    let result2 = bash_tool.execute(input2, None).await;
     assert!(result2.is_ok(), "Second command should succeed");
     
     let output2 = result2.unwrap();
@@ -67,7 +67,7 @@ async fn test_bash_tool_persistent_session_advanced_mode() {
         "advanced_persistence": true
     });
     
-    let result1 = bash_tool.execute(input1).await;
+    let result1 = bash_tool.execute(input1, None).await;
     assert!(result1.is_ok(), "First command should succeed");
     println!("First command output: {}", result1.unwrap());
     
@@ -78,7 +78,7 @@ async fn test_bash_tool_persistent_session_advanced_mode() {
         "advanced_persistence": true
     });
     
-    let result2 = bash_tool.execute(input2).await;
+    let result2 = bash_tool.execute(input2, None).await;
     assert!(result2.is_ok(), "Second command should succeed");
     
     let output2 = result2.unwrap();
@@ -103,7 +103,7 @@ async fn test_bash_tool_working_directory() {
         "working_dir": temp_dir.to_str().unwrap()
     });
     
-    let result = bash_tool.execute(input).await;
+    let result = bash_tool.execute(input, None).await;
     assert!(result.is_ok(), "Command with working directory should succeed");
     
     let output = result.unwrap();
@@ -127,7 +127,7 @@ async fn test_bash_tool_environment_variables() {
         "shell_id": "env_test_session"
     });
     
-    let result = bash_tool.execute(input).await;
+    let result = bash_tool.execute(input, None).await;
     assert!(result.is_ok(), "Command with environment variables should succeed");
     
     let output = result.unwrap();
@@ -146,7 +146,7 @@ async fn test_bash_tool_timeout() {
         "shell_id": "timeout_test_session"
     });
     
-    let result = bash_tool.execute(input).await;
+    let result = bash_tool.execute(input, None).await;
     // Should timeout and return an error
     assert!(result.is_err(), "Command should timeout");
     
@@ -166,7 +166,7 @@ async fn test_bash_tool_error_handling() {
         "shell_id": "error_test_session"
     });
     
-    let result = bash_tool.execute(input).await;
+    let result = bash_tool.execute(input, None).await;
     assert!(result.is_ok(), "Tool should handle command errors gracefully");
     
     let output = result.unwrap();
@@ -187,7 +187,7 @@ async fn test_bash_tool_shell_executable() {
         "shell_id": "shell_exec_test"
     });
     
-    let result = bash_tool.execute(input).await;
+    let result = bash_tool.execute(input, None).await;
     assert!(result.is_ok(), "Command with shell executable should succeed");
     
     let output = result.unwrap();
@@ -207,7 +207,7 @@ async fn test_bash_tool_sandbox_mode() {
         "shell_id": "sandbox_test_session"
     });
     
-    let result = bash_tool.execute(input).await;
+    let result = bash_tool.execute(input, None).await;
     // On macOS, sandbox should work
     assert!(result.is_ok(), "Sandbox mode should work on macOS");
     
@@ -228,7 +228,7 @@ async fn test_bash_tool_sandbox_mode_unsupported() {
         "shell_id": "sandbox_fail_test"
     });
     
-    let result = bash_tool.execute(input).await;
+    let result = bash_tool.execute(input, None).await;
     // On non-macOS systems, sandbox should fail
     assert!(result.is_err(), "Sandbox mode should fail on non-macOS systems");
     
@@ -252,7 +252,7 @@ async fn test_bash_tool_multiple_sessions_with_advanced_mode() {
         "advanced_persistence": true
     });
     
-    let result1 = bash_tool.execute(input1).await;
+    let result1 = bash_tool.execute(input1, None).await;
     assert!(result1.is_ok(), "Session 1 setup should succeed");
     
     // Set different variable in session 2 with advanced persistence
@@ -262,7 +262,7 @@ async fn test_bash_tool_multiple_sessions_with_advanced_mode() {
         "advanced_persistence": true
     });
     
-    let result2 = bash_tool.execute(input2).await;
+    let result2 = bash_tool.execute(input2, None).await;
     assert!(result2.is_ok(), "Session 2 setup should succeed");
     
     // Check session 1 still has its value
@@ -272,7 +272,7 @@ async fn test_bash_tool_multiple_sessions_with_advanced_mode() {
         "advanced_persistence": true
     });
     
-    let result3 = bash_tool.execute(input3).await;
+    let result3 = bash_tool.execute(input3, None).await;
     assert!(result3.is_ok(), "Session 1 check should succeed");
     
     let output3 = result3.unwrap();
@@ -286,7 +286,7 @@ async fn test_bash_tool_multiple_sessions_with_advanced_mode() {
         "advanced_persistence": true
     });
     
-    let result4 = bash_tool.execute(input4).await;
+    let result4 = bash_tool.execute(input4, None).await;
     assert!(result4.is_ok(), "Session 2 check should succeed");
     
     let output4 = result4.unwrap();
@@ -311,7 +311,7 @@ async fn test_bash_tool_working_directory_persistence() {
         "shell_id": "wd_session"
     });
     
-    let result1 = bash_tool.execute(input1).await;
+    let result1 = bash_tool.execute(input1, None).await;
     assert!(result1.is_ok(), "First command should succeed");
     
     // Check if we're still in that directory
@@ -320,7 +320,7 @@ async fn test_bash_tool_working_directory_persistence() {
         "shell_id": "wd_session"
     });
     
-    let result2 = bash_tool.execute(input2).await;
+    let result2 = bash_tool.execute(input2, None).await;
     assert!(result2.is_ok(), "Second command should succeed");
     
     let output2 = result2.unwrap();

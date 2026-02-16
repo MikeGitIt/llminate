@@ -4,12 +4,12 @@ use crate::telemetry;
 use crate::tui::{
     self, create_event_handler, init_terminal, restore_terminal, TuiEvent,
 };
-use crate::tui::components::{ChatView, StatusBar, ToolPanel, UiMessage as Message};
+use crate::tui::components::{ChatView, ProgressIndicator, StatusBar, ToolPanel, UiMessage as Message};
 use crate::tui::state::AppState;
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
     Frame, Terminal,
@@ -136,6 +136,40 @@ async fn run_app(
                         MouseEventKind::ScrollDown => {
                             app_state.scroll_down(3);
                             needs_redraw = true;
+                        }
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            // Start text selection in chat area
+                            // Convert screen position to line/column (accounting for scroll)
+                            let line = mouse.row as usize + app_state.scroll_offset;
+                            let col = mouse.column as usize;
+                            app_state.chat_selection_start = Some((line, col));
+                            app_state.chat_selection_end = Some((line, col));
+                            app_state.chat_is_selecting = true;
+                            app_state.chat_selected_text = None;
+                            needs_redraw = true;
+                        }
+                        MouseEventKind::Drag(MouseButton::Left) => {
+                            // Extend selection while dragging
+                            if app_state.chat_is_selecting {
+                                let line = mouse.row as usize + app_state.scroll_offset;
+                                let col = mouse.column as usize;
+                                app_state.chat_selection_end = Some((line, col));
+                                needs_redraw = true;
+                            }
+                        }
+                        MouseEventKind::Up(MouseButton::Left) => {
+                            // Finish selection and extract selected text
+                            if app_state.chat_is_selecting {
+                                app_state.chat_is_selecting = false;
+                                // Extract selected text from rendered lines
+                                if let (Some(start), Some(end)) = (app_state.chat_selection_start, app_state.chat_selection_end) {
+                                    let selected = app_state.extract_selected_text(start, end);
+                                    if !selected.is_empty() {
+                                        app_state.chat_selected_text = Some(selected);
+                                    }
+                                }
+                                needs_redraw = true;
+                            }
                         }
                         _ => {}
                     }
@@ -361,7 +395,8 @@ fn draw_ui(f: &mut Frame, app_state: &mut AppState) {
             app_state.get_spinner_char(),
             app_state.is_processing
         )
-        .with_next_todo(app_state.next_todo.as_deref());
+        .with_next_todo(app_state.next_todo.as_deref())
+        .with_selection(app_state.chat_selection_start, app_state.chat_selection_end);
     f.render_widget(chat_view, chunks[0]);
     
     // chunks[1] is now the padding space - leave it empty
@@ -388,9 +423,9 @@ fn draw_ui(f: &mut Frame, app_state: &mut AppState) {
         .title(title)
         .borders(Borders::ALL)
         .style(if app_state.input_mode {
-            Style::default().fg(Color::White)
+            Style::default()
         } else {
-            Style::default().fg(Color::DarkGray)
+            Style::default().add_modifier(Modifier::DIM)
         });
     let inner = input_block.inner(chunks[2]);
     f.render_widget(input_block, chunks[2]);
@@ -439,7 +474,7 @@ fn draw_ui(f: &mut Frame, app_state: &mut AppState) {
             let indicator = format!("... +{} more lines (Ctrl+E to expand)", extra_lines);
             display_lines.push(Line::from(Span::styled(
                 indicator,
-                Style::default().fg(Color::DarkGray)
+                Style::default().add_modifier(Modifier::DIM)
             )));
         }
         
@@ -489,9 +524,30 @@ fn draw_ui(f: &mut Frame, app_state: &mut AppState) {
         draw_session_picker(f, size, app_state);
     }
 
+    // Draw model picker overlay if active
+    if app_state.show_model_picker {
+        draw_model_picker(f, size, app_state);
+    }
+
     // Draw status view overlay if active (matches JavaScript tabbed UI)
     if app_state.show_status_view {
         draw_status_view(f, size, app_state);
+    }
+
+    // Draw progress bar if determinate progress is set (matches JavaScript terminalProgressBarEnabled)
+    if let Some(progress) = app_state.get_progress() {
+        // Render progress bar at bottom of screen, above status bar
+        let progress_area = Rect {
+            x: size.x + 2,
+            y: size.height.saturating_sub(4),
+            width: size.width.saturating_sub(4),
+            height: 3,
+        };
+        f.render_widget(Clear, progress_area);
+
+        let progress_widget = ProgressIndicator::new("Processing...".to_string())
+            .with_progress(progress);
+        f.render_widget(progress_widget, progress_area);
     }
 
     // Draw permission dialog if active
@@ -667,13 +723,46 @@ async fn handle_key_event(app_state: &mut AppState, key: KeyEvent) -> Result<()>
             _ => return Ok(()),
         }
     }
+
+    // Handle model picker keys
+    if app_state.show_model_picker {
+        let models = app_state.get_available_models();
+        match key.code {
+            KeyCode::Up => {
+                if app_state.model_picker_selected > 0 {
+                    app_state.model_picker_selected -= 1;
+                }
+                return Ok(());
+            }
+            KeyCode::Down => {
+                if app_state.model_picker_selected < models.len().saturating_sub(1) {
+                    app_state.model_picker_selected += 1;
+                }
+                return Ok(());
+            }
+            KeyCode::Enter => {
+                app_state.select_model_by_index(app_state.model_picker_selected);
+                return Ok(());
+            }
+            KeyCode::Esc => {
+                app_state.show_model_picker = false;
+                return Ok(());
+            }
+            _ => return Ok(()),
+        }
+    }
     
     match key.code {
         KeyCode::Char('q') | KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app_state.quit();
             return Ok(());
         }
+        // Ctrl+? or Ctrl+/ to toggle help (? requires Shift, so also handle /)
         KeyCode::Char('?') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app_state.toggle_help();
+            return Ok(());
+        }
+        KeyCode::Char('/') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app_state.toggle_help();
             return Ok(());
         }
@@ -691,6 +780,13 @@ async fn handle_key_event(app_state: &mut AppState, key: KeyEvent) -> Result<()>
             return Ok(());
         }
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // First check if there's chat text selected - copy it
+            if app_state.chat_selected_text.is_some() {
+                app_state.copy_chat_selection();
+                app_state.clear_chat_selection();
+                return Ok(());
+            }
+            // Otherwise handle as cancel/close
             if app_state.is_processing {
                 app_state.cancel_operation().await?;
                 // Add cancellation feedback
@@ -712,6 +808,23 @@ async fn handle_key_event(app_state: &mut AppState, key: KeyEvent) -> Result<()>
             app_state.toggle_input_expansion();
             return Ok(());
         }
+        KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // Ctrl+S: Prompt stash - save current input and clear, or restore stashed input
+            // Matches JavaScript behavior at line 480754
+            app_state.toggle_prompt_stash();
+            return Ok(());
+        }
+        KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // Ctrl+T: Toggle TODOs display
+            // Matches JavaScript behavior at line 481215
+            app_state.toggle_todos_display();
+            return Ok(());
+        }
+        KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // Ctrl+F: Toggle find/search mode
+            app_state.toggle_find_mode();
+            return Ok(());
+        }
         // Arrow keys are for input history when in input mode, not scrolling
         KeyCode::Esc => {
             // First check if we're processing and should cancel
@@ -724,6 +837,11 @@ async fn handle_key_event(app_state: &mut AppState, key: KeyEvent) -> Result<()>
                     timestamp: crate::utils::timestamp_ms(),
                 });
                 app_state.scroll_to_bottom();
+                return Ok(());
+            }
+            // Handle autocomplete dropdown - close it with Esc
+            if app_state.is_autocomplete_visible {
+                app_state.hide_autocomplete();
                 return Ok(());
             }
             // Then handle dialogs
@@ -794,19 +912,173 @@ async fn handle_key_event(app_state: &mut AppState, key: KeyEvent) -> Result<()>
             return Ok(());
         }
         
-        // Ctrl+N for newline (since Shift+Enter may not work on all terminals)
+        // Vim/Emacs-style cursor navigation
+        // Ctrl+P - move cursor up (previous line)
+        if key.code == KeyCode::Char('p') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            app_state.input_textarea.move_cursor(tui_textarea::CursorMove::Up);
+            return Ok(());
+        }
+
+        // Ctrl+N - move cursor down (next line)
         if key.code == KeyCode::Char('n') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            app_state.input_textarea.move_cursor(tui_textarea::CursorMove::Down);
+            return Ok(());
+        }
+
+        // Ctrl+E - move cursor to end of line
+        if key.code == KeyCode::Char('e') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            app_state.input_textarea.move_cursor(tui_textarea::CursorMove::End);
+            return Ok(());
+        }
+
+        // Ctrl+A - select all (standard behavior)
+        if key.code == KeyCode::Char('a') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            app_state.input_textarea.select_all();
+            return Ok(());
+        }
+
+        // Ctrl+F - move cursor forward (right)
+        if key.code == KeyCode::Char('f') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            app_state.input_textarea.move_cursor(tui_textarea::CursorMove::Forward);
+            return Ok(());
+        }
+
+        // Ctrl+B - move cursor back (left)
+        if key.code == KeyCode::Char('b') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            app_state.input_textarea.move_cursor(tui_textarea::CursorMove::Back);
+            return Ok(());
+        }
+
+        // Alt+Enter for newline (alternative to Shift+Enter which may not work on all terminals)
+        if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::ALT) {
             app_state.input_textarea.insert_newline();
             return Ok(());
         }
-        
+
+        // Ctrl+Enter for newline (another alternative)
+        if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::CONTROL) {
+            app_state.input_textarea.insert_newline();
+            return Ok(());
+        }
+
+        // Ctrl+J for newline (traditional Unix LF - most reliable)
+        if key.code == KeyCode::Char('j') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            app_state.input_textarea.insert_newline();
+            return Ok(());
+        }
+
+        // Ctrl+O for newline (alternative - open line below)
+        if key.code == KeyCode::Char('o') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            app_state.input_textarea.insert_newline();
+            return Ok(());
+        }
+
         // Override Ctrl+U to match bash behavior (delete to beginning of line)
         // tui-textarea maps Ctrl+U to undo by default, but bash uses it for delete-to-beginning
         if key.code == KeyCode::Char('u') && key.modifiers.contains(KeyModifiers::CONTROL) {
             app_state.input_textarea.delete_line_by_head();
             return Ok(());
         }
-        
+
+        // Ctrl+K - delete to end of line (bash/emacs style)
+        if key.code == KeyCode::Char('k') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            app_state.input_textarea.delete_line_by_end();
+            return Ok(());
+        }
+
+        // Ctrl+W - delete word backwards (bash style)
+        if key.code == KeyCode::Char('w') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            app_state.input_textarea.delete_word();
+            return Ok(());
+        }
+
+        // Text selection with Shift+Arrow keys
+        if key.modifiers.contains(KeyModifiers::SHIFT) {
+            match key.code {
+                KeyCode::Left => {
+                    if !app_state.input_textarea.is_selecting() {
+                        app_state.input_textarea.start_selection();
+                    }
+                    app_state.input_textarea.move_cursor(tui_textarea::CursorMove::Back);
+                    return Ok(());
+                }
+                KeyCode::Right => {
+                    if !app_state.input_textarea.is_selecting() {
+                        app_state.input_textarea.start_selection();
+                    }
+                    app_state.input_textarea.move_cursor(tui_textarea::CursorMove::Forward);
+                    return Ok(());
+                }
+                KeyCode::Up => {
+                    if !app_state.input_textarea.is_selecting() {
+                        app_state.input_textarea.start_selection();
+                    }
+                    app_state.input_textarea.move_cursor(tui_textarea::CursorMove::Up);
+                    return Ok(());
+                }
+                KeyCode::Down => {
+                    if !app_state.input_textarea.is_selecting() {
+                        app_state.input_textarea.start_selection();
+                    }
+                    app_state.input_textarea.move_cursor(tui_textarea::CursorMove::Down);
+                    return Ok(());
+                }
+                KeyCode::Home => {
+                    if !app_state.input_textarea.is_selecting() {
+                        app_state.input_textarea.start_selection();
+                    }
+                    app_state.input_textarea.move_cursor(tui_textarea::CursorMove::Head);
+                    return Ok(());
+                }
+                KeyCode::End => {
+                    if !app_state.input_textarea.is_selecting() {
+                        app_state.input_textarea.start_selection();
+                    }
+                    app_state.input_textarea.move_cursor(tui_textarea::CursorMove::End);
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+
+        // Ctrl+Shift+Arrow for word selection
+        if key.modifiers.contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT) {
+            match key.code {
+                KeyCode::Left => {
+                    if !app_state.input_textarea.is_selecting() {
+                        app_state.input_textarea.start_selection();
+                    }
+                    app_state.input_textarea.move_cursor(tui_textarea::CursorMove::WordBack);
+                    return Ok(());
+                }
+                KeyCode::Right => {
+                    if !app_state.input_textarea.is_selecting() {
+                        app_state.input_textarea.start_selection();
+                    }
+                    app_state.input_textarea.move_cursor(tui_textarea::CursorMove::WordForward);
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+
+        // Ctrl+C - copy selection (when not processing)
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            if app_state.input_textarea.is_selecting() {
+                app_state.input_textarea.copy();
+                return Ok(());
+            }
+            // If not selecting, let normal Ctrl+C handling continue (cancel operation)
+        }
+
+        // Ctrl+X - cut selection
+        if key.code == KeyCode::Char('x') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            if app_state.input_textarea.is_selecting() {
+                app_state.input_textarea.cut();
+                return Ok(());
+            }
+        }
+
         // Special handling for history navigation
         // Allow up/down arrows for history when:
         // 1. Single line input, OR
@@ -855,25 +1127,44 @@ fn draw_help(f: &mut Frame, area: Rect) {
         "  Ctrl+Q, Ctrl+D    Quit",
         "  Ctrl+C            Cancel current operation",
         "  Ctrl+L            Clear screen",
-        "  Ctrl+?            Toggle this help",
+        "  Ctrl+/ or Ctrl+?  Toggle this help",
         "  Ctrl+G            Toggle debug panel",
+        "  Ctrl+R            Toggle expand/collapse view",
         "  Tab               Auto-complete",
-        "  Up/Down           Navigate history",
+        "  Up/Down           Navigate history (single line)",
         "",
         "Input Commands:",
         "  Enter             Send message",
-        "  Shift+Enter       Insert newline",
+        "  Ctrl+J            Insert newline (most reliable)",
+        "  Ctrl+O            Insert newline (alternative)",
+        "  Ctrl+Enter        Insert newline (if terminal supports)",
+        "  Shift+Enter       Insert newline (if terminal supports)",
         "  Ctrl+V            Paste (multiline supported)",
-        "  Ctrl+E            Toggle input area expand/collapse",
+        "",
+        "Cursor Navigation (Emacs-style):",
+        "  Ctrl+P            Move cursor up",
+        "  Ctrl+N            Move cursor down",
+        "  Ctrl+E            Move to end of line",
+        "  Ctrl+F            Move cursor forward",
+        "  Ctrl+B            Move cursor back",
+        "",
+        "Selection:",
+        "  Shift+Arrow       Select text",
+        "  Ctrl+Shift+Arrow  Select word",
+        "  Ctrl+A            Select all",
+        "  Ctrl+C            Copy selection",
+        "  Ctrl+X            Cut selection",
+        "",
+        "Editing:",
+        "  Ctrl+U            Delete to beginning of line",
+        "  Ctrl+K            Delete to end of line",
+        "  Ctrl+W            Delete word backwards",
         "",
         "Special Commands:",
         "  /help             Show available commands",
         "  /clear            Clear conversation",
         "  /save             Save conversation",
-        "  /load             Load conversation",
         "  /model <name>     Change model",
-        "  /tools            Show available tools",
-        "  /mcp              List MCP servers",
         "  /exit, /quit      Exit application",
         "",
         "Press ESC to close this help",
@@ -886,7 +1177,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
                 .borders(Borders::ALL)
                 .style(Style::default().fg(Color::Cyan)),
         )
-        .style(Style::default().fg(Color::White));
+        .style(Style::default());
     
     f.render_widget(help_widget, area);
 }
@@ -935,7 +1226,7 @@ fn draw_session_picker(f: &mut Frame, area: Rect, app_state: &AppState) {
         );
         
         let style = if i == app_state.session_picker_selected {
-            Style::default().bg(Color::DarkGray).fg(Color::White)
+            Style::default().add_modifier(Modifier::REVERSED)
         } else {
             Style::default()
         };
@@ -946,6 +1237,83 @@ fn draw_session_picker(f: &mut Frame, area: Rect, app_state: &AppState) {
     lines.push(ratatui::text::Line::from(""));
     lines.push(ratatui::text::Line::from("Use ↑/↓ to select, Enter to resume, Esc to cancel"));
     
+    let paragraph = Paragraph::new(lines);
+    f.render_widget(paragraph, inner);
+}
+
+/// Draw model picker overlay (matches JavaScript model selection UI)
+fn draw_model_picker(f: &mut Frame, area: Rect, app_state: &AppState) {
+    let picker_area = centered_rect(60, 50, area);
+    f.render_widget(Clear, picker_area);
+
+    let block = Block::default()
+        .title(" Select Model ")
+        .borders(Borders::ALL)
+        .style(Style::default().fg(Color::Cyan));
+
+    let inner = block.inner(picker_area);
+    f.render_widget(block, picker_area);
+
+    let models = app_state.get_available_models();
+    let mut lines = vec![
+        ratatui::text::Line::from(ratatui::text::Span::styled(
+            "Choose a model for this session:",
+            Style::default().add_modifier(Modifier::DIM)
+        )),
+        ratatui::text::Line::from(""),
+    ];
+
+    for (i, (name, model_id, description)) in models.iter().enumerate() {
+        let is_selected = i == app_state.model_picker_selected;
+        let is_current = *model_id == app_state.current_model;
+
+        let prefix = if is_selected { "❯ " } else { "  " };
+        let current_marker = if is_current { " (current)" } else { "" };
+
+        let style = if is_selected {
+            Style::default().add_modifier(Modifier::REVERSED)
+        } else {
+            Style::default()
+        };
+
+        // Model name line
+        lines.push(ratatui::text::Line::from(vec![
+            ratatui::text::Span::styled(prefix, style),
+            ratatui::text::Span::styled(*name, style.add_modifier(ratatui::style::Modifier::BOLD)),
+            ratatui::text::Span::styled(current_marker, Style::default().fg(Color::Green)),
+        ]));
+
+        // Description line (indented)
+        let desc_style = if is_selected {
+            Style::default().add_modifier(Modifier::REVERSED).add_modifier(Modifier::DIM)
+        } else {
+            Style::default().add_modifier(Modifier::DIM)
+        };
+        lines.push(ratatui::text::Line::from(vec![
+            ratatui::text::Span::styled("    ", desc_style),
+            ratatui::text::Span::styled(*description, desc_style),
+        ]));
+
+        // Model ID line (indented, dimmer)
+        let id_style = if is_selected {
+            Style::default().add_modifier(Modifier::REVERSED).add_modifier(Modifier::DIM)
+        } else {
+            Style::default().add_modifier(Modifier::DIM)
+        };
+        lines.push(ratatui::text::Line::from(vec![
+            ratatui::text::Span::styled("    ", id_style),
+            ratatui::text::Span::styled(format!("({})", model_id), id_style),
+        ]));
+
+        lines.push(ratatui::text::Line::from("")); // Spacing between models
+    }
+
+    lines.push(ratatui::text::Line::from(""));
+    lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
+        "Use ↑/↓ to select, Enter to confirm, Esc to cancel",
+        Style::default().add_modifier(Modifier::DIM)
+    )));
+
     let paragraph = Paragraph::new(lines);
     f.render_widget(paragraph, inner);
 }
@@ -965,7 +1333,7 @@ fn draw_status_view(f: &mut Frame, area: Rect, app_state: &AppState) {
     // Tab header: Settings: [Status] Config Usage (tab to cycle)
     let tab_names = ["Status", "Config", "Usage"];
     let mut tab_spans: Vec<ratatui::text::Span> = vec![
-        ratatui::text::Span::styled("Settings: ", Style::default().fg(Color::White)),
+        ratatui::text::Span::styled("Settings: ", Style::default()),
     ];
 
     for (i, name) in tab_names.iter().enumerate() {
@@ -978,13 +1346,13 @@ fn draw_status_view(f: &mut Frame, area: Rect, app_state: &AppState) {
         } else {
             tab_spans.push(ratatui::text::Span::styled(
                 format!(" {} ", name),
-                Style::default().fg(Color::Gray)
+                Style::default().add_modifier(Modifier::DIM)
             ));
         }
     }
     tab_spans.push(ratatui::text::Span::styled(
         " (tab to cycle)",
-        Style::default().fg(Color::DarkGray)
+        Style::default().add_modifier(Modifier::DIM)
     ));
 
     let mut lines = vec![
@@ -1010,8 +1378,8 @@ fn draw_status_view(f: &mut Frame, area: Rect, app_state: &AppState) {
     match app_state.status_view_tab {
         0 => {
             // Status tab content (matches JavaScript screenshot)
-            let bold = Style::default().fg(Color::White).add_modifier(ratatui::style::Modifier::BOLD);
-            let normal = Style::default().fg(Color::White);
+            let bold = Style::default().add_modifier(ratatui::style::Modifier::BOLD);
+            let normal = Style::default();
 
             lines.push(ratatui::text::Line::from(vec![
                 ratatui::text::Span::styled("Version: ".to_string(), bold),
@@ -1055,7 +1423,7 @@ fn draw_status_view(f: &mut Frame, area: Rect, app_state: &AppState) {
             // Config tab content (matches JavaScript screenshot)
             lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
                 "Configure Claude Code preferences",
-                Style::default().fg(Color::Gray)
+                Style::default().add_modifier(Modifier::DIM)
             )));
             lines.push(ratatui::text::Line::from(""));
 
@@ -1065,12 +1433,12 @@ fn draw_status_view(f: &mut Frame, area: Rect, app_state: &AppState) {
                 let style = if i == app_state.status_config_selected {
                     Style::default().fg(Color::Cyan)
                 } else {
-                    Style::default().fg(Color::White)
+                    Style::default()
                 };
                 let value_style = if value == "true" {
                     Style::default().fg(Color::Cyan)
                 } else if value == "false" {
-                    Style::default().fg(Color::Gray)
+                    Style::default().add_modifier(Modifier::DIM)
                 } else {
                     Style::default().fg(Color::Cyan)
                 };
@@ -1098,39 +1466,39 @@ fn draw_status_view(f: &mut Frame, area: Rect, app_state: &AppState) {
 
             lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
                 "Current session",
-                Style::default().fg(Color::White).add_modifier(ratatui::style::Modifier::BOLD)
+                Style::default().add_modifier(ratatui::style::Modifier::BOLD)
             )));
             lines.push(ratatui::text::Line::from(render_usage_bar(session_pct)));
             lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
                 format!("{} / {} tokens used", token_count, model_limit),
-                Style::default().fg(Color::Gray)
+                Style::default().add_modifier(Modifier::DIM)
             )));
             lines.push(ratatui::text::Line::from(""));
 
             // Weekly usage data requires API integration - show actual status
             lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
                 "Current week (all models)",
-                Style::default().fg(Color::White).add_modifier(ratatui::style::Modifier::BOLD)
+                Style::default().add_modifier(ratatui::style::Modifier::BOLD)
             )));
             lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
                 "Weekly usage data requires API integration",
-                Style::default().fg(Color::DarkGray)
+                Style::default().add_modifier(Modifier::DIM)
             )));
             lines.push(ratatui::text::Line::from(""));
 
             lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
                 "Current week (Sonnet only)",
-                Style::default().fg(Color::White).add_modifier(ratatui::style::Modifier::BOLD)
+                Style::default().add_modifier(ratatui::style::Modifier::BOLD)
             )));
             lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
                 "Weekly usage data requires API integration",
-                Style::default().fg(Color::DarkGray)
+                Style::default().add_modifier(Modifier::DIM)
             )));
             lines.push(ratatui::text::Line::from(""));
 
             lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
                 "Extra usage",
-                Style::default().fg(Color::White).add_modifier(ratatui::style::Modifier::BOLD)
+                Style::default().add_modifier(ratatui::style::Modifier::BOLD)
             )));
             if extra_usage_enabled {
                 lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
@@ -1140,7 +1508,7 @@ fn draw_status_view(f: &mut Frame, area: Rect, app_state: &AppState) {
             } else {
                 lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
                     "Extra usage not enabled • /extra-usage to enable",
-                    Style::default().fg(Color::Gray)
+                    Style::default().add_modifier(Modifier::DIM)
                 )));
             }
         }
@@ -1155,7 +1523,7 @@ fn draw_status_view(f: &mut Frame, area: Rect, app_state: &AppState) {
     };
     lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
         footer,
-        Style::default().fg(Color::DarkGray)
+        Style::default().add_modifier(Modifier::DIM)
     )));
 
     let paragraph = Paragraph::new(lines);
@@ -1306,11 +1674,11 @@ fn render_usage_bar(percent: u8) -> Vec<ratatui::text::Span<'static>> {
     ));
     spans.push(ratatui::text::Span::styled(
         "░".repeat(empty),
-        Style::default().fg(Color::DarkGray)
+        Style::default().add_modifier(Modifier::DIM)
     ));
     spans.push(ratatui::text::Span::styled(
         format!(" {}% used", percent),
-        Style::default().fg(Color::White)
+        Style::default()
     ));
     spans
 }
@@ -1342,7 +1710,7 @@ fn draw_debug_panel(f: &mut Frame, area: Rect, app_state: &AppState) {
                 .borders(Borders::ALL)
                 .style(Style::default().fg(Color::Yellow)),
         )
-        .style(Style::default().fg(Color::Gray));
+        .style(Style::default().add_modifier(Modifier::DIM));
     
     f.render_widget(debug_widget, area);
 }

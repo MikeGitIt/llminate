@@ -101,8 +101,9 @@ fn test_has_valid_scopes_with_required_scope() {
         expires_at: None,
         scopes: vec!["user:inference".to_string(), "user:read".to_string()],
         subscription_type: None,
+        account_uuid: None,
     });
-    
+
     assert!(AuthManager::has_valid_scopes(&oauth));
 }
 
@@ -115,6 +116,7 @@ fn test_has_valid_scopes_without_required_scope() {
         expires_at: None,
         scopes: vec!["user:read".to_string(), "user:write".to_string()],
         subscription_type: None,
+        account_uuid: None,
     });
     
     assert!(!AuthManager::has_valid_scopes(&oauth));

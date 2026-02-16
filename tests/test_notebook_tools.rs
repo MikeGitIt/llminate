@@ -78,7 +78,7 @@ async fn test_notebook_read_all_cells() -> Result<()> {
         "notebook_path": notebook_path.to_str().ok_or_else(|| anyhow::anyhow!("Invalid path"))?
     });
     
-    let result = tool.execute(input).await?;
+    let result = tool.execute(input, None).await?;
     
     // Verify the output contains expected content in XML-like format (matches JavaScript)
     assert!(result.contains("<cell id="));
@@ -111,7 +111,7 @@ async fn test_notebook_read_specific_cell_by_index() -> Result<()> {
     });
     
     // JavaScript would fail here - it doesn't support numeric indices in execution
-    let result = tool.execute(input).await;
+    let result = tool.execute(input, None).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("Cell with ID \"1\" not found in notebook"));
     
@@ -120,7 +120,7 @@ async fn test_notebook_read_specific_cell_by_index() -> Result<()> {
         "notebook_path": notebook_path.to_str().ok_or_else(|| anyhow::anyhow!("Invalid path"))?,
         "cell_id": "code-1"
     });
-    let result = tool.execute(input).await?;
+    let result = tool.execute(input, None).await?;
     
     // Should only contain the second cell (code-1) in XML format
     assert!(result.contains("<cell id=\"code-1\">"));
@@ -144,7 +144,7 @@ async fn test_notebook_read_specific_cell_by_id() -> Result<()> {
         "cell_id": "code-2"
     });
     
-    let result = tool.execute(input).await?;
+    let result = tool.execute(input, None).await?;
     
     // Should only contain the factorial cell in XML format
     assert!(result.contains("<cell id=\"code-2\">"));
@@ -163,7 +163,7 @@ async fn test_notebook_read_nonexistent_file() -> Result<()> {
         "notebook_path": "/nonexistent/path/notebook.ipynb"
     });
     
-    let result = tool.execute(input).await;
+    let result = tool.execute(input, None).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("Invalid notebook path"));
     
@@ -181,7 +181,7 @@ async fn test_notebook_read_invalid_extension() -> Result<()> {
         "notebook_path": file_path.to_str().ok_or_else(|| anyhow::anyhow!("Invalid path"))?
     });
     
-    let result = tool.execute(input).await;
+    let result = tool.execute(input, None).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("must be a Jupyter notebook"));
     
@@ -203,7 +203,7 @@ async fn test_notebook_edit_replace_cell() -> Result<()> {
         "new_source": "# Modified code\nprint('Modified!')"
     });
     
-    let result = tool.execute(input).await?;
+    let result = tool.execute(input, None).await?;
     assert!(result.contains("Updated cell"));
     
     // Read back and verify
@@ -244,7 +244,7 @@ async fn test_notebook_edit_insert_cell() -> Result<()> {
         "edit_mode": "insert"
     });
     
-    let result = tool.execute(input).await?;
+    let result = tool.execute(input, None).await?;
     assert!(result.contains("Inserted cell"));
     
     // Read back and verify
@@ -287,7 +287,7 @@ async fn test_notebook_edit_delete_cell() -> Result<()> {
         "edit_mode": "delete"
     });
     
-    let result = tool.execute(input).await?;
+    let result = tool.execute(input, None).await?;
     assert!(result.contains("Deleted cell"));
     
     // Read back and verify
@@ -329,7 +329,7 @@ async fn test_notebook_edit_change_cell_type() -> Result<()> {
         "cell_type": "markdown"
     });
     
-    let result = tool.execute(input).await?;
+    let result = tool.execute(input, None).await?;
     assert!(result.contains("Updated cell"));
     
     // Read back and verify
@@ -363,7 +363,7 @@ async fn test_notebook_edit_invalid_cell_id() -> Result<()> {
         "new_source": "This won't work"
     });
     
-    let result = tool.execute(input).await;
+    let result = tool.execute(input, None).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("not found in notebook"));
     
@@ -394,7 +394,7 @@ async fn test_notebook_edit_empty_notebook() -> Result<()> {
         "edit_mode": "insert"
     });
     
-    let result = tool.execute(input).await?;
+    let result = tool.execute(input, None).await?;
     assert!(result.contains("Inserted cell"));
     
     // Verify the notebook now has one cell

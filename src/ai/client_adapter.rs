@@ -105,6 +105,16 @@ impl AIClientAdapter {
     pub fn create_chat_request(&self) -> ChatRequestBuilder {
         ChatRequestBuilder::new(self.config.default_model.clone())
     }
+
+    /// Count tokens for a message request
+    /// Uses Anthropic's /v1/messages/count_tokens endpoint
+    pub async fn count_tokens(
+        &self,
+        request: crate::auth::client::CountTokensRequest,
+    ) -> Result<crate::auth::client::CountTokensResponse> {
+        self.inner.count_tokens(&request).await
+            .map_err(|e| crate::error::Error::Other(e.to_string()))
+    }
 }
 
 // Re-export the types that are used in the AI module

@@ -40,7 +40,7 @@ async fn test_file_multi_edit_basic() {
     });
     
     // Execute the tool
-    let result = multi_edit_tool.execute(input).await;
+    let result = multi_edit_tool.execute(input, None).await;
     assert!(result.is_ok(), "FileMultiEdit should succeed");
     
     // Verify the content changed
@@ -82,7 +82,7 @@ async fn test_file_multi_edit_with_replace_all() {
     });
     
     // Execute the tool
-    let result = multi_edit_tool.execute(input).await;
+    let result = multi_edit_tool.execute(input, None).await;
     assert!(result.is_ok(), "FileMultiEdit with replace_all should succeed");
     
     // Verify all occurrences were replaced
@@ -124,7 +124,7 @@ async fn test_file_multi_edit_sequential_edits() {
     });
     
     // Execute the tool
-    let result = multi_edit_tool.execute(input).await;
+    let result = multi_edit_tool.execute(input, None).await;
     assert!(result.is_ok(), "Sequential edits should succeed");
     
     // Verify sequential processing
@@ -166,7 +166,7 @@ async fn test_file_multi_edit_string_not_found() {
     });
     
     // Execute the tool - should still succeed with partial edits
-    let result = multi_edit_tool.execute(input).await;
+    let result = multi_edit_tool.execute(input, None).await;
     assert!(result.is_ok(), "FileMultiEdit should succeed with partial edits");
     
     // Verify only valid edit was applied
@@ -208,7 +208,7 @@ async fn test_file_multi_edit_no_valid_edits() {
     });
     
     // Execute the tool
-    let result = multi_edit_tool.execute(input).await;
+    let result = multi_edit_tool.execute(input, None).await;
     assert!(result.is_err(), "FileMultiEdit should fail when no edits can be applied");
     
     let error_msg = result.unwrap_err().to_string();

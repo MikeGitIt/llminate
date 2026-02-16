@@ -12,11 +12,11 @@ async fn test_task_tool_schema() -> Result<()> {
     let tool_executor = ToolExecutor::new();
     let tools = tool_executor.get_available_tools();
     let task_tool = tools.iter()
-        .find(|t| t.name == "Task")
+        .find(|t| t.name() == "Task")
         .expect("Task tool should be registered");
     
     // Verify the schema matches JavaScript implementation
-    let schema = &task_tool.input_schema;
+    let schema = &task_tool.input_schema();
     
     // Check required fields
     assert_eq!(schema["type"], "object");
@@ -61,7 +61,7 @@ async fn test_task_tool_single_agent_execution() -> Result<()> {
     let tool_executor = ToolExecutor::new();
     let tools = tool_executor.get_available_tools();
     let task_tool_info = tools.iter()
-        .find(|t| t.name == "Task")
+        .find(|t| t.name() == "Task")
         .expect("Task tool should be registered");
     
     // Create AgentTool directly for testing
@@ -75,7 +75,7 @@ async fn test_task_tool_single_agent_execution() -> Result<()> {
     });
     
     // Execute the tool
-    let result = handler.execute(input.clone()).await;
+    let result = handler.execute(input.clone(), None).await;
     
     match result {
         Ok(output) => {
@@ -120,7 +120,7 @@ async fn test_task_tool_parallel_execution() -> Result<()> {
     let tool_executor = ToolExecutor::new();
     let tools = tool_executor.get_available_tools();
     let task_tool_info = tools.iter()
-        .find(|t| t.name == "Task")
+        .find(|t| t.name() == "Task")
         .expect("Task tool should be registered");
     
     // Create AgentTool directly for testing
@@ -134,7 +134,7 @@ async fn test_task_tool_parallel_execution() -> Result<()> {
     });
     
     // Execute the tool
-    let result = handler.execute(input).await;
+    let result = handler.execute(input, None).await;
     
     match result {
         Ok(output) => {
@@ -178,7 +178,7 @@ async fn test_task_tool_error_handling() -> Result<()> {
     let tool_executor = ToolExecutor::new();
     let tools = tool_executor.get_available_tools();
     let task_tool_info = tools.iter()
-        .find(|t| t.name == "Task")
+        .find(|t| t.name() == "Task")
         .expect("Task tool should be registered");
     
     // Create AgentTool directly for testing
@@ -190,7 +190,7 @@ async fn test_task_tool_error_handling() -> Result<()> {
         "description": "Test task"
     });
     
-    let result = handler.execute(input_missing_prompt).await;
+    let result = handler.execute(input_missing_prompt, None).await;
     assert!(result.is_err(), "Should fail with missing prompt");
     let error_msg = result.unwrap_err().to_string();
     assert!(error_msg.contains("Missing 'prompt' field"), "Error should mention missing prompt");
@@ -201,13 +201,13 @@ async fn test_task_tool_error_handling() -> Result<()> {
         "prompt": null
     });
     
-    let result = handler.execute(input_null_prompt).await;
+    let result = handler.execute(input_null_prompt, None).await;
     assert!(result.is_err(), "Should fail with null prompt");
     
     // Test with empty object
     let empty_input = json!({});
     
-    let result = handler.execute(empty_input).await;
+    let result = handler.execute(empty_input, None).await;
     assert!(result.is_err(), "Should fail with empty input");
     
     // Test with wrong types
@@ -216,7 +216,7 @@ async fn test_task_tool_error_handling() -> Result<()> {
         "prompt": true       // Should be string
     });
     
-    let result = handler.execute(wrong_type_input).await;
+    let result = handler.execute(wrong_type_input, None).await;
     assert!(result.is_err(), "Should fail with wrong types");
     
     println!("✓ Task tool error handling works correctly");
@@ -228,7 +228,7 @@ async fn test_task_tool_action_methods() -> Result<()> {
     let tool_executor = ToolExecutor::new();
     let tools = tool_executor.get_available_tools();
     let task_tool_info = tools.iter()
-        .find(|t| t.name == "Task")
+        .find(|t| t.name() == "Task")
         .expect("Task tool should be registered");
     
     // Create AgentTool directly for testing
@@ -272,7 +272,7 @@ async fn test_task_tool_slash_command_support() -> Result<()> {
     let tool_executor = ToolExecutor::new();
     let tools = tool_executor.get_available_tools();
     let task_tool_info = tools.iter()
-        .find(|t| t.name == "Task")
+        .find(|t| t.name() == "Task")
         .expect("Task tool should be registered");
     
     // Create AgentTool directly for testing
@@ -354,7 +354,7 @@ async fn test_task_tool_synthesis_prompt_generation() -> Result<()> {
     let tool_executor = ToolExecutor::new();
     let tools = tool_executor.get_available_tools();
     let task_tool_info = tools.iter()
-        .find(|t| t.name == "Task")
+        .find(|t| t.name() == "Task")
         .expect("Task tool should be registered");
     
     // Create AgentTool directly for testing
@@ -367,7 +367,7 @@ async fn test_task_tool_synthesis_prompt_generation() -> Result<()> {
     });
     
     // Execute and check output structure
-    let result = handler.execute(input).await;
+    let result = handler.execute(input, None).await;
     
     match result {
         Ok(output) => {
@@ -405,7 +405,7 @@ async fn test_task_tool_agent_filtering() -> Result<()> {
     let tools = tool_executor.get_available_tools();
     
     // Verify Task tool exists in main tool set
-    let has_task_tool = tools.iter().any(|t| t.name == "Task");
+    let has_task_tool = tools.iter().any(|t| t.name() == "Task");
     assert!(has_task_tool, "Task tool should be available in main tool set");
     
     // Count total tools
@@ -416,7 +416,7 @@ async fn test_task_tool_agent_filtering() -> Result<()> {
     // This prevents sub-agents from launching more sub-agents
     let filtered_tools: Vec<_> = tools
         .into_iter()
-        .filter(|tool| tool.name != "Task")
+        .filter(|tool| tool.name() != "Task")
         .collect();
     
     assert_eq!(
@@ -426,7 +426,7 @@ async fn test_task_tool_agent_filtering() -> Result<()> {
     );
     
     // Verify Task is not in filtered set
-    let has_task_in_filtered = filtered_tools.iter().any(|t| t.name == "Task");
+    let has_task_in_filtered = filtered_tools.iter().any(|t| t.name() == "Task");
     assert!(!has_task_in_filtered, "Task tool should NOT be in filtered set");
     
     println!("✓ Task tool filtering works correctly (prevents recursion)");
@@ -439,7 +439,7 @@ async fn test_task_tool_output_format() -> Result<()> {
     let tool_executor = ToolExecutor::new();
     let tools = tool_executor.get_available_tools();
     let task_tool_info = tools.iter()
-        .find(|t| t.name == "Task")
+        .find(|t| t.name() == "Task")
         .expect("Task tool should be registered");
     
     // Create AgentTool directly for testing
@@ -456,7 +456,7 @@ async fn test_task_tool_output_format() -> Result<()> {
         "prompt": "Test output formatting"
     });
     
-    match handler.execute(input.clone()).await {
+    match handler.execute(input.clone(), None).await {
         Ok(output) => {
             // Check single agent format
             let lines: Vec<&str> = output.lines().collect();
@@ -488,7 +488,7 @@ async fn test_task_tool_output_format() -> Result<()> {
     config.parallel_tasks_count = Some(2);
     save_config(ConfigScope::User, &config)?;
     
-    match handler.execute(input).await {
+    match handler.execute(input, None).await {
         Ok(output) => {
             // Check parallel format
             assert!(

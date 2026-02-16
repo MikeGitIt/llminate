@@ -182,8 +182,9 @@ pub fn parse_markdown(content: &str) -> Text<'static> {
                 if in_code_block {
                     code_content.push_str(&text);
                 } else {
-                    let mut style = Style::default();
-                    
+                    // Use White as default foreground color for visibility
+                    let mut style = Style::default().fg(Color::White);
+
                     if in_bold {
                         style = style.add_modifier(Modifier::BOLD);
                     }
@@ -193,7 +194,7 @@ pub fn parse_markdown(content: &str) -> Text<'static> {
                     if in_code {
                         style = style.fg(Color::Yellow).bg(Color::Rgb(40, 40, 40));
                     }
-                    
+
                     current_line.push(Span::styled(text.to_string(), style));
                 }
             }

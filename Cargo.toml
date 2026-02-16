@@ -23,6 +23,7 @@ crossterm = { version = "0.27", features = ["bracketed-paste"] }
 tui-textarea = "0.7"
 pulldown-cmark = "0.13"
 syntect = "5.2"
+arboard = "3.4"  # Clipboard support
 
 # Web framework
 axum = "0.7"
@@ -48,6 +49,7 @@ clap = { version = "4.4", features = ["derive", "env", "cargo"] }
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_yaml = "0.9"
 serde_urlencoded = "0.7"
 toml = "0.8"
 
@@ -111,6 +113,9 @@ rand = "0.8"
 # Error tracking
 sentry = { version = "0.32", features = ["anyhow", "debug-images", "tracing", "backtrace"] }
 unicode-width = "0.2.0"
+
+# Terminal progress bars (for print mode)
+indicatif = "0.17"
 
 [build-dependencies]
 prost-build = "0.12"

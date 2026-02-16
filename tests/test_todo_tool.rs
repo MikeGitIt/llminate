@@ -62,13 +62,13 @@ async fn test_todo_write_and_read() -> Result<()> {
     });
     
     // Write todos
-    let result = write_tool.execute(todos).await?;
+    let result = write_tool.execute(todos, None).await?;
     assert!(result.contains("Todos have been modified successfully"));
     println!("Write result: {}", result);
     
     // Now read them back
     let read_tool = TodoReadTool;
-    let read_result = read_tool.execute(json!({})).await?;
+    let read_result = read_tool.execute(json!({}), None).await?;
     
     println!("Read result:\n{}", read_result);
     
@@ -136,11 +136,11 @@ async fn test_todo_read_empty() -> Result<()> {
     
     // Clear any existing todos first
     let write_tool = TodoWriteTool;
-    write_tool.execute(json!({"todos": []})).await?;
+    write_tool.execute(json!({"todos": []}), None).await?;
     
     // Read empty todo list
     let read_tool = TodoReadTool;
-    let result = read_tool.execute(json!({})).await?;
+    let result = read_tool.execute(json!({}), None).await?;
     
     assert_eq!(result, "(Todo list is empty)");
     println!("✓ Empty todo list handled correctly");
@@ -187,11 +187,11 @@ async fn test_todo_sorting() -> Result<()> {
         ]
     });
     
-    write_tool.execute(todos).await?;
+    write_tool.execute(todos, None).await?;
     
     // Read and verify sorting
     let read_tool = TodoReadTool;
-    let result = read_tool.execute(json!({})).await?;
+    let result = read_tool.execute(json!({}), None).await?;
     
     let lines: Vec<&str> = result.lines().collect();
     
@@ -228,10 +228,10 @@ async fn test_todo_invalid_input() -> Result<()> {
     let write_tool = TodoWriteTool;
     
     // Test with missing todos field
-    let result = write_tool.execute(json!({})).await;
+    let result = write_tool.execute(json!({}), None).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("Missing or invalid 'todos' field"));
-    
+
     // Test with invalid todo format
     let result = write_tool.execute(json!({
         "todos": [
@@ -242,7 +242,7 @@ async fn test_todo_invalid_input() -> Result<()> {
                 "id": "1"
             }
         ]
-    })).await;
+    }), None).await;
     assert!(result.is_err());
     
     println!("✓ Invalid input handled correctly");

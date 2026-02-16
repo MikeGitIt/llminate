@@ -496,6 +496,18 @@ pub enum ContentBlock {
         name: String,
         input: serde_json::Value,
     },
+    /// Thinking block for interleaved-thinking-2025-05-14 beta
+    #[serde(rename = "thinking")]
+    Thinking {
+        thinking: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
+    },
+    /// Redacted thinking block
+    #[serde(rename = "redacted_thinking")]
+    RedactedThinking {
+        data: String,
+    },
 }
 
 /// Content delta
@@ -506,6 +518,12 @@ pub enum ContentDelta {
     TextDelta { text: String },
     #[serde(rename = "input_json_delta")]
     InputJsonDelta { partial_json: String },
+    /// Thinking delta for interleaved-thinking-2025-05-14 beta
+    #[serde(rename = "thinking_delta")]
+    ThinkingDelta { thinking: String },
+    /// Signature delta for thinking blocks
+    #[serde(rename = "signature_delta")]
+    SignatureDelta { signature: String },
 }
 
 /// Message delta

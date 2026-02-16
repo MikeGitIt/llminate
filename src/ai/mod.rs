@@ -7,9 +7,13 @@ pub mod system_prompt;
 pub mod tools;
 pub mod agent_tool;
 pub mod todo_tool;
+pub mod task_tools;
 pub mod web_tools;
 pub mod notebook_tools;
 pub mod exit_plan_mode_tool;
+pub mod enter_plan_mode_tool;
+pub mod ask_user_question_tool;
+pub mod skill_tool;
 pub mod summarization;
 pub mod git_prompts;
 pub mod github_prompts;
@@ -221,6 +225,23 @@ impl Tool {
         match self {
             Tool::Standard { name, .. } => name,
             Tool::WebSearch { name, .. } => name,
+        }
+    }
+
+    /// Get the input schema of the tool
+    pub fn input_schema(&self) -> serde_json::Value {
+        match self {
+            Tool::Standard { input_schema, .. } => input_schema.clone(),
+            Tool::WebSearch { .. } => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query"
+                    }
+                },
+                "required": ["query"]
+            }),
         }
     }
 }

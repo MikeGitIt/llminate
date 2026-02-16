@@ -26,7 +26,7 @@ async fn test_file_edit_basic_replacement() {
     });
     
     // Execute the tool
-    let result = edit_tool.execute(input).await;
+    let result = edit_tool.execute(input, None).await;
     assert!(result.is_ok(), "FileEdit should succeed");
     
     // Verify the content changed
@@ -59,7 +59,7 @@ async fn test_file_edit_replace_all() {
     });
     
     // Execute the tool
-    let result = edit_tool.execute(input).await;
+    let result = edit_tool.execute(input, None).await;
     assert!(result.is_ok(), "FileEdit with replace_all should succeed");
     
     // Verify all occurrences were replaced
@@ -92,7 +92,7 @@ async fn test_file_edit_string_not_found() {
     });
     
     // Execute the tool
-    let result = edit_tool.execute(input).await;
+    let result = edit_tool.execute(input, None).await;
     assert!(result.is_err(), "FileEdit should fail when string not found");
     
     let error_msg = result.unwrap_err().to_string();
@@ -123,7 +123,7 @@ async fn test_file_edit_same_strings() {
     });
     
     // Execute the tool
-    let result = edit_tool.execute(input).await;
+    let result = edit_tool.execute(input, None).await;
     assert!(result.is_err(), "FileEdit should fail when old_string equals new_string");
     
     let error_msg = result.unwrap_err().to_string();

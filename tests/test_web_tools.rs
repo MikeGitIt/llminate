@@ -28,7 +28,7 @@ async fn test_webfetch_real_website() -> Result<()> {
     });
     
     // Execute
-    let result = tool.execute(input).await?;
+    let result = tool.execute(input, None).await?;
     
     // Verify we got actual content
     println!("WebFetch result for example.com:\n{}", result);
@@ -59,7 +59,7 @@ async fn test_webfetch_github_api() -> Result<()> {
     });
     
     // Execute
-    let result = tool.execute(input).await?;
+    let result = tool.execute(input, None).await?;
     
     println!("WebFetch result for GitHub API:\n{}", result);
     
@@ -85,7 +85,7 @@ async fn test_webfetch_http_to_https_upgrade_real() -> Result<()> {
     });
     
     // Execute - should upgrade to HTTPS and fetch
-    let result = tool.execute(input).await;
+    let result = tool.execute(input, None).await;
     
     // rust-lang.org should work with HTTPS
     if let Ok(content) = result {
@@ -115,7 +115,7 @@ async fn test_webfetch_404_error() -> Result<()> {
     });
     
     // Execute
-    let result = tool.execute(input).await?;
+    let result = tool.execute(input, None).await?;
     
     println!("WebFetch 404 result:\n{}", result);
     
@@ -141,7 +141,7 @@ async fn test_webfetch_large_content_truncation() -> Result<()> {
     });
     
     // Execute
-    let result = tool.execute(input).await;
+    let result = tool.execute(input, None).await;
     
     if let Ok(content) = result {
         println!("Large content fetch - length: {} chars", content.len());
@@ -177,7 +177,7 @@ async fn test_webfetch_caching_real() -> Result<()> {
     });
     
     let start1 = std::time::Instant::now();
-    let result1 = tool.execute(input1).await?;
+    let result1 = tool.execute(input1, None).await?;
     let duration1 = start1.elapsed();
     
     println!("First fetch took: {:?}", duration1);
@@ -190,7 +190,7 @@ async fn test_webfetch_caching_real() -> Result<()> {
     });
     
     let start2 = std::time::Instant::now();
-    let result2 = tool.execute(input2).await?;
+    let result2 = tool.execute(input2, None).await?;
     let duration2 = start2.elapsed();
     
     println!("Second fetch took: {:?}", duration2);
@@ -220,7 +220,7 @@ async fn test_websearch_real_execution() -> Result<()> {
     });
     
     // Execute
-    let result = tool.execute(input).await?;
+    let result = tool.execute(input, None).await?;
     
     println!("WebSearch result:\n{}", result);
     
@@ -250,7 +250,7 @@ async fn test_websearch_with_domain_filters() -> Result<()> {
     });
     
     // Execute
-    let result = tool.execute(input).await?;
+    let result = tool.execute(input, None).await?;
     
     println!("WebSearch with filters result:\n{}", result);
     
@@ -277,7 +277,7 @@ async fn test_webfetch_timeout_handling() -> Result<()> {
     
     // Execute and expect timeout
     let start = std::time::Instant::now();
-    let result = tool.execute(input).await;
+    let result = tool.execute(input, None).await;
     let duration = start.elapsed();
     
     println!("Timeout test took: {:?}", duration);
@@ -308,7 +308,7 @@ async fn test_webfetch_invalid_ssl_cert() -> Result<()> {
     });
     
     // Execute - should handle SSL error gracefully
-    let result = tool.execute(input).await;
+    let result = tool.execute(input, None).await;
     
     if result.is_err() {
         println!("✓ SSL error handled gracefully");
@@ -329,22 +329,22 @@ async fn test_websearch_schema_validation() -> Result<()> {
     
     // Test with missing query
     let input = json!({});
-    let result = tool.execute(input).await;
+    let result = tool.execute(input, None).await;
     assert!(result.is_err(), "Should fail with missing query");
     
     // Test with empty query
     let input = json!({"query": ""});
-    let result = tool.execute(input).await;
+    let result = tool.execute(input, None).await;
     assert!(result.is_err(), "Should fail with empty query");
     
     // Test with short query
     let input = json!({"query": "a"});
-    let result = tool.execute(input).await;
+    let result = tool.execute(input, None).await;
     assert!(result.is_err(), "Should fail with query too short");
     
     // Test with valid query
     let input = json!({"query": "ok"});
-    let result = tool.execute(input).await;
+    let result = tool.execute(input, None).await;
     assert!(result.is_ok(), "Should succeed with valid query");
     
     println!("✓ WebSearch schema validation working correctly");
@@ -360,12 +360,12 @@ async fn test_webfetch_schema_validation() -> Result<()> {
     
     // Test with missing URL
     let input = json!({"prompt": "test"});
-    let result = tool.execute(input).await;
+    let result = tool.execute(input, None).await;
     assert!(result.is_err(), "Should fail with missing URL");
     
     // Test with missing prompt
     let input = json!({"url": "https://example.com"});
-    let result = tool.execute(input).await;
+    let result = tool.execute(input, None).await;
     assert!(result.is_err(), "Should fail with missing prompt");
     
     // Test with invalid URL
@@ -373,7 +373,7 @@ async fn test_webfetch_schema_validation() -> Result<()> {
         "url": "not a url",
         "prompt": "test"
     });
-    let result = tool.execute(input).await;
+    let result = tool.execute(input, None).await;
     assert!(result.is_err(), "Should fail with invalid URL");
     
     // Test with valid input
@@ -381,7 +381,7 @@ async fn test_webfetch_schema_validation() -> Result<()> {
         "url": "https://example.com",
         "prompt": "test"
     });
-    let result = tool.execute(input).await;
+    let result = tool.execute(input, None).await;
     assert!(result.is_ok(), "Should succeed with valid input");
     
     println!("✓ WebFetch schema validation working correctly");

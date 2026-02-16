@@ -25,7 +25,7 @@ async fn test_grep_basic_search() -> Result<()> {
         "path": test_dir.to_string_lossy().to_string()
     });
     
-    let result = grep_tool.execute(input).await?;
+    let result = grep_tool.execute(input, None).await?;
     println!("Test 1 - Search for 'fn': {}", result);
     
     // Should find file1.rs and file2.rs
@@ -58,7 +58,7 @@ async fn test_grep_with_include_parameter() -> Result<()> {
         "include": "*.rs"
     });
     
-    let result = grep_tool.execute(input).await?;
+    let result = grep_tool.execute(input, None).await?;
     println!("Test 2 - Search with include '*.rs': {}", result);
     
     // Should only find .rs files
@@ -94,7 +94,7 @@ async fn test_grep_with_complex_include_pattern() -> Result<()> {
         "include": "*.{ts,tsx}"
     });
     
-    let result = grep_tool.execute(input).await?;
+    let result = grep_tool.execute(input, None).await?;
     println!("Test 3 - Search with include '*.{{ts,tsx}}': {}", result);
     
     // Should find .ts and .tsx files
@@ -123,7 +123,7 @@ async fn test_grep_no_matches() -> Result<()> {
         "path": test_dir.to_string_lossy().to_string()
     });
     
-    let result = grep_tool.execute(input).await?;
+    let result = grep_tool.execute(input, None).await?;
     println!("Test 4 - No matches: {}", result);
     
     // Should return "No files found"
@@ -155,7 +155,7 @@ async fn test_grep_multiple_include_patterns() -> Result<()> {
         "include": "*.js *.ts *.jsx"
     });
     
-    let result = grep_tool.execute(input).await?;
+    let result = grep_tool.execute(input, None).await?;
     println!("Test 5 - Multiple include patterns: {}", result);
     
     // Should find .js, .ts, and .jsx files

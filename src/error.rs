@@ -74,7 +74,10 @@ pub enum Error {
 
     #[error("Tool not allowed: {0}")]
     ToolNotAllowed(String),
-    
+
+    #[error("Hook blocked execution: {0}")]
+    HookBlocked(String),
+
     #[error("Permission required: {0}")]
     PermissionRequired(String),
 

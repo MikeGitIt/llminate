@@ -176,3 +176,9 @@ When using `SelfRefNode` to handle circular references in flows:
     - Be direct and professional, not obsequious
     - Acknowledge corrections without excessive agreement
     - Focus on fixing problems, not appeasing
+
+21. **USE AGENT TEAMS FOR LARGE MULTI-FILE IMPLEMENTATIONS**
+    - Reference: https://docs.anthropic.com/en/docs/claude-code/agent-teams
+    - When implementing multiple features across many files, use agent teams
+    - Do NOT use parallel subagents for coordinated work
+    - Agent teams provide better coordination for complex implementations

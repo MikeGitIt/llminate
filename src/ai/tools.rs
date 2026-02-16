@@ -1,10 +1,15 @@
 use crate::ai::{ContentPart, Tool};
 use crate::ai::agent_tool::AgentTool;
 use crate::ai::todo_tool::{TodoWriteTool, TodoReadTool};
+use crate::ai::task_tools::{TaskCreateTool, TaskGetTool, TaskUpdateTool, TaskListTool};
 use crate::ai::web_tools::{WebFetchTool, WebSearchTool};
 use crate::ai::notebook_tools::{NotebookReadTool, NotebookEditTool};
 use crate::ai::exit_plan_mode_tool::ExitPlanModeTool;
+use crate::ai::enter_plan_mode_tool::EnterPlanModeTool;
+use crate::ai::ask_user_question_tool::AskUserQuestionTool;
+use crate::ai::skill_tool::SkillTool;
 use crate::error::{Error, Result};
+use crate::hooks::{execute_hooks, HookType, HookContext};
 use crate::tui::{TuiEvent, PermissionDecision};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -30,6 +35,7 @@ use rand::Rng;
 /// Tool execution context (mirrors JavaScript's context with AbortController)
 pub struct ToolContext {
     pub tool_use_id: String,
+    pub session_id: String,  // Session ID for hook context
     pub event_tx: Option<mpsc::UnboundedSender<TuiEvent>>,
     pub cancellation_token: Option<CancellationToken>,  // Like JavaScript's AbortSignal
 }
@@ -553,9 +559,16 @@ impl ToolExecutor {
         tools.insert("NotebookRead".to_string(), Box::new(NotebookReadTool));
         tools.insert("NotebookEdit".to_string(), Box::new(NotebookEditTool));
         tools.insert("ExitPlanMode".to_string(), Box::new(ExitPlanModeTool));
+        tools.insert("EnterPlanMode".to_string(), Box::new(EnterPlanModeTool));
+        tools.insert("AskUserQuestion".to_string(), Box::new(AskUserQuestionTool));
         tools.insert("BashOutput".to_string(), Box::new(BashOutputTool));
         tools.insert("KillBash".to_string(), Box::new(KillBashTool));
-        
+        tools.insert("TaskCreate".to_string(), Box::new(TaskCreateTool));
+        tools.insert("TaskGet".to_string(), Box::new(TaskGetTool));
+        tools.insert("TaskUpdate".to_string(), Box::new(TaskUpdateTool));
+        tools.insert("TaskList".to_string(), Box::new(TaskListTool));
+        tools.insert("Skill".to_string(), Box::new(SkillTool));
+
         Self {
             tools,
             allowed_tools: Vec::new(),
@@ -628,20 +641,53 @@ impl ToolExecutor {
             .tools
             .get(name)
             .ok_or_else(|| Error::ToolNotFound(name.to_string()))?;
-        
+
         // Check if tool is allowed
         if !self.is_tool_allowed(name) {
             return Err(Error::ToolNotAllowed(name.to_string()));
         }
-        
+
         // Permission handling for Bash is now done entirely in the streaming flow in state.rs
         // No special handling needed here - just execute the tool normally
-        
-        // Extract cancellation token from context (like JavaScript's AbortSignal)
+
+        // Extract session_id and cancellation token from context
+        let session_id = context.as_ref().map(|ctx| ctx.session_id.clone()).unwrap_or_default();
         let cancellation_token = context.as_ref().and_then(|ctx| ctx.cancellation_token.clone());
-        
+
+        // Execute PreToolUse hooks
+        let hook_context = HookContext::new(HookType::PreToolUse, &session_id)
+            .with_tool(name, input.clone());
+        let pre_hook_results = execute_hooks(HookType::PreToolUse, &hook_context).await;
+
+        // Check if any hook wants to stop execution
+        for result in &pre_hook_results {
+            if result.stop_execution {
+                return Err(Error::HookBlocked(
+                    result.stop_reason.clone().unwrap_or_else(|| "Hook stopped execution".to_string())
+                ));
+            }
+        }
+
         // Execute tool with cancellation support
-        let result = handler.execute(input.clone(), cancellation_token).await?;
+        let tool_result = handler.execute(input.clone(), cancellation_token).await;
+
+        // Execute PostToolUse or PostToolUseFailure hooks based on result
+        match &tool_result {
+            Ok(output) => {
+                let hook_context = HookContext::new(HookType::PostToolUse, &session_id)
+                    .with_tool(name, input.clone())
+                    .with_output(output);
+                let _ = execute_hooks(HookType::PostToolUse, &hook_context).await;
+            }
+            Err(e) => {
+                let hook_context = HookContext::new(HookType::PostToolUseFailure, &session_id)
+                    .with_tool(name, input.clone())
+                    .with_output(&e.to_string());
+                let _ = execute_hooks(HookType::PostToolUseFailure, &hook_context).await;
+            }
+        }
+
+        let result = tool_result?;
         
         // Special handling for TodoWrite - notify TUI to update TODO display
         if name == "TodoWrite" {
@@ -2824,10 +2870,60 @@ impl ToolHandler for BashOutputTool {
         let timeout_ms = input["timeout"].as_u64().unwrap_or(30000).min(600000);
         let filter = input["filter"].as_str();
 
-        // TODO: Implement proper blocking and timeout behavior like JavaScript
-        // For now, just get the output directly
+        // Implement proper blocking and timeout behavior like JavaScript
+        if block {
+            let start = std::time::Instant::now();
+            let timeout_duration = std::time::Duration::from_millis(timeout_ms);
+
+            loop {
+                // Check cancellation
+                if let Some(ref token) = cancellation_token {
+                    if token.is_cancelled() {
+                        return Err(Error::Cancelled("Task output retrieval cancelled".to_string()));
+                    }
+                }
+
+                // Get current shell status
+                if let Some(shell) = BACKGROUND_SHELLS.get_shell(task_id).await {
+                    if shell.status != "running" {
+                        // Shell has completed - break out to get final output
+                        break;
+                    }
+                } else {
+                    // Shell not found - return error immediately
+                    let output_json = json!({
+                        "shellId": task_id,
+                        "command": "",
+                        "status": "failed",
+                        "exitCode": null,
+                        "stdout": "",
+                        "stderr": format!("Shell '{}' not found", task_id)
+                    });
+                    return Ok(serde_json::to_string_pretty(&output_json)?);
+                }
+
+                // Check timeout
+                if start.elapsed() >= timeout_duration {
+                    // Return current output with timeout indicator
+                    let output_json = BACKGROUND_SHELLS.get_shell_output(task_id).await;
+                    let mut result = output_json.clone();
+                    result["timedOut"] = json!(true);
+                    result["timeoutMs"] = json!(timeout_ms);
+                    result["message"] = json!(format!(
+                        "Timed out waiting for task '{}' to complete after {} ms",
+                        task_id, timeout_ms
+                    ));
+                    return Ok(serde_json::to_string_pretty(&result)?);
+                }
+
+                // Wait before checking again (100ms polling interval)
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        }
+
+        // Get the output
         let output_json = BACKGROUND_SHELLS.get_shell_output(task_id).await;
-        
+
         // Apply filter if provided
         if let Some(filter_regex) = filter {
             if let Ok(re) = regex::Regex::new(filter_regex) {
@@ -2836,14 +2932,14 @@ impl ToolHandler for BashOutputTool {
                         .lines()
                         .filter(|line| re.is_match(line))
                         .collect();
-                    
+
                     let mut result = output_json.clone();
                     result["stdout"] = json!(filtered_lines.join("\n"));
                     return Ok(serde_json::to_string_pretty(&result)?);
                 }
             }
         }
-        
+
         Ok(serde_json::to_string_pretty(&output_json)?)
     }
 }
