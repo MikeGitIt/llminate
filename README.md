@@ -114,7 +114,7 @@ llminate --help
 Once in the TUI:
 - Type your queries naturally
 - Use `/help` for available commands
-- Press `Ctrl+C` to exit
+- Press `Ctrl+q` to exit
 
 ## Development
 
