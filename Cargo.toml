@@ -2,6 +2,7 @@
 name = "llminate"
 version = "1.0.29"
 edition = "2021"
+license = "Apache-2.0"
 
 [dependencies]
 # Error handling
