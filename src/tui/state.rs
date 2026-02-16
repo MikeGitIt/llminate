@@ -5755,18 +5755,33 @@ Format your review with clear sections:
         for msg in self.messages.iter() {
             match msg.role.as_str() {
                 "user" => {
+                    // Use bright magenta for user messages to ensure visibility
+                    let dot = if cfg!(target_os = "macos") { "⏺" } else { "●" };
                     if msg.content.starts_with('/') {
                         all_lines.push(Line::from(vec![
-                            Span::styled(msg.content.clone(), Style::default().fg(Color::DarkGray))
+                            Span::styled(dot, Style::default().fg(Color::Magenta)),
+                            Span::raw(" "),
+                            Span::styled(msg.content.clone(), Style::default().fg(Color::LightMagenta))
                         ]));
                         all_lines.push(Line::from(vec![
                             Span::raw("  ⎿  "),
                         ]));
                     } else {
+                        let mut first_line = true;
                         for line in msg.content.lines() {
-                            all_lines.push(Line::from(vec![
-                                Span::styled(line.to_string(), Style::default().fg(Color::DarkGray))
-                            ]));
+                            if first_line {
+                                all_lines.push(Line::from(vec![
+                                    Span::styled(dot, Style::default().fg(Color::Magenta)),
+                                    Span::raw(" "),
+                                    Span::styled(line.to_string(), Style::default().fg(Color::LightMagenta))
+                                ]));
+                                first_line = false;
+                            } else {
+                                all_lines.push(Line::from(vec![
+                                    Span::raw("  "),
+                                    Span::styled(line.to_string(), Style::default().fg(Color::LightMagenta))
+                                ]));
+                            }
                         }
                     }
                 }

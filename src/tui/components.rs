@@ -117,10 +117,23 @@ impl<'a> Widget for ChatView<'a> {
                             Span::raw("  ⎿  "),
                         ]));
                     } else {
+                        // User messages - use bright/bold green for visibility
+                        let dot = if cfg!(target_os = "macos") { "⏺" } else { "●" };
+                        let mut first_line = true;
                         for line in msg.content.lines() {
-                            all_lines.push(Line::from(vec![
-                                Span::styled(line.to_string(), Style::default().fg(Color::White))
-                            ]));
+                            if first_line {
+                                all_lines.push(Line::from(vec![
+                                    Span::styled(dot, Style::default().fg(Color::Magenta)),
+                                    Span::raw(" "),
+                                    Span::styled(line.to_string(), Style::default().fg(Color::LightMagenta))
+                                ]));
+                                first_line = false;
+                            } else {
+                                all_lines.push(Line::from(vec![
+                                    Span::raw("   "),
+                                    Span::styled(line.to_string(), Style::default().fg(Color::LightMagenta))
+                                ]));
+                            }
                         }
                     }
                 }
