@@ -346,7 +346,7 @@ impl<'a> Widget for ChatView<'a> {
                 Span::raw(" "),
                 Span::styled(status_text, Style::default().fg(Color::White)),
                 Span::raw(" "),
-                Span::styled("(esc to interrupt • ctrl+r to expand)", Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)),
+                Span::styled("(esc to interrupt • ctrl+r to expand)", Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC)),
             ]));
         }
 

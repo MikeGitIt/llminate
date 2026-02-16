@@ -5791,20 +5791,20 @@ Format your review with clear sections:
                         for line in lines.iter().take(3) {
                             all_lines.push(Line::from(vec![
                                 Span::raw("     "),
-                                Span::styled(line.to_string(), Style::default().fg(Color::DarkGray)),
+                                Span::styled(line.to_string(), Style::default().fg(Color::White)),
                             ]));
                         }
                         all_lines.push(Line::from(vec![
                             Span::raw("  ⎿  "),
-                            Span::styled(format!("... {} more lines", lines.len() - 3), Style::default().fg(Color::DarkGray)),
+                            Span::styled(format!("... {} more lines", lines.len() - 3), Style::default().fg(Color::Gray)),
                             Span::raw(" "),
-                            Span::styled("(ctrl+r to expand)", Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)),
+                            Span::styled("(ctrl+r to expand)", Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC)),
                         ]));
                     } else {
                         for line in lines {
                             all_lines.push(Line::from(vec![
-                                Span::raw("     "), 
-                                Span::raw(line.to_string()),
+                                Span::raw("     "),
+                                Span::styled(line.to_string(), Style::default().fg(Color::White)),
                             ]));
                         }
                     }
@@ -5821,21 +5821,21 @@ Format your review with clear sections:
                             all_lines.push(Line::from(vec![
                                 Span::styled(dot, Style::default().fg(Color::Green)),
                                 Span::raw(" "),
-                                Span::raw("**Result:**"),
+                                Span::styled("**Result:**", Style::default().fg(Color::White)),
                             ]));
-                            
+
                             for line in lines.iter().skip(1).take(3) {
                                 all_lines.push(Line::from(vec![
                                     Span::raw("     "),
-                                    Span::styled(line.to_string(), Style::default().fg(Color::DarkGray)),
+                                    Span::styled(line.to_string(), Style::default().fg(Color::White)),
                                 ]));
                             }
-                            
+
                             all_lines.push(Line::from(vec![
                                 Span::raw("  ⎿  "),
-                                Span::styled(format!("... {} more lines", lines.len() - 4), Style::default().fg(Color::DarkGray)),
+                                Span::styled(format!("... {} more lines", lines.len() - 4), Style::default().fg(Color::Gray)),
                                 Span::raw(" "),
-                                Span::styled("(ctrl+r to expand)", Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)),
+                                Span::styled("(ctrl+r to expand)", Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC)),
                             ]));
                         } else {
                             let text = parse_markdown(&msg.content);

@@ -109,16 +109,16 @@ pub fn parse_markdown(content: &str) -> Text<'static> {
                     if !code_content.is_empty() {
                         lines.push(Line::from(vec![Span::styled(
                             "─".repeat(40),
-                            Style::default().fg(Color::DarkGray),
+                            Style::default().fg(Color::Gray),
                         )]));
-                        
+
                         if !code_lang.is_empty() {
                             lines.push(Line::from(vec![Span::styled(
                                 format!(" {} ", code_lang),
                                 Style::default().fg(Color::Cyan).add_modifier(Modifier::ITALIC),
                             )]));
                         }
-                        
+
                         // Apply syntax highlighting if language is recognized
                         if let Some(syntax) = syntax_set.find_syntax_by_token(&code_lang) {
                             highlight_code(&code_content, syntax, theme, &mut lines);
@@ -131,10 +131,10 @@ pub fn parse_markdown(content: &str) -> Text<'static> {
                                 )]));
                             }
                         }
-                        
+
                         lines.push(Line::from(vec![Span::styled(
                             "─".repeat(40),
-                            Style::default().fg(Color::DarkGray),
+                            Style::default().fg(Color::Gray),
                         )]));
                     }
                     
