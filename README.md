@@ -69,7 +69,7 @@ Built with modern Rust practices:
 
 ```bash
 # Clone the repository
-git clone [repository-url]
+git clone https://github.com/MikeGitIt/llminate.git
 cd llminate
 
 # Build the project
