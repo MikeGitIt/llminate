@@ -25,10 +25,10 @@ pub struct Credentials {
 pub trait CredentialsStorage: Send + Sync {
     /// Read credentials from storage
     async fn read(&self) -> Result<Option<Credentials>>;
-    
+
     /// Update credentials in storage
     async fn update(&self, credentials: Credentials) -> Result<()>;
-    
+
     /// Delete credentials from storage
     async fn delete(&self) -> Result<()>;
 }
@@ -42,10 +42,10 @@ impl PlaintextStorage {
     pub fn new() -> Result<Self> {
         let config_dir = get_config_directory()?;
         let file_path = config_dir.join(".credentials.json");
-        
+
         Ok(Self { file_path })
     }
-    
+
     pub fn new_with_path(file_path: PathBuf) -> Self {
         Self { file_path }
     }
@@ -55,23 +55,24 @@ impl PlaintextStorage {
 impl CredentialsStorage for PlaintextStorage {
     async fn read(&self) -> Result<Option<Credentials>> {
         if !self.file_path.exists() {
-            debug!("Plaintext credentials file does not exist: {:?}", self.file_path);
+            debug!(
+                "Plaintext credentials file does not exist: {:?}",
+                self.file_path
+            );
             return Ok(None);
         }
 
         match fs::read_to_string(&self.file_path).await {
-            Ok(content) => {
-                match serde_json::from_str::<Credentials>(&content) {
-                    Ok(creds) => {
-                        debug!("Successfully read plaintext credentials");
-                        Ok(Some(creds))
-                    }
-                    Err(e) => {
-                        error!("Failed to parse credentials JSON: {}", e);
-                        Ok(None)
-                    }
+            Ok(content) => match serde_json::from_str::<Credentials>(&content) {
+                Ok(creds) => {
+                    debug!("Successfully read plaintext credentials");
+                    Ok(Some(creds))
                 }
-            }
+                Err(e) => {
+                    error!("Failed to parse credentials JSON: {}", e);
+                    Ok(None)
+                }
+            },
             Err(e) => {
                 error!("Failed to read credentials file: {}", e);
                 Ok(None)
@@ -83,26 +84,30 @@ impl CredentialsStorage for PlaintextStorage {
         // Ensure directory exists
         if let Some(parent) = self.file_path.parent() {
             if !parent.exists() {
-                fs::create_dir_all(parent).await
-                    .map_err(|e| Error::Config(format!("Failed to create config directory: {}", e)))?;
+                fs::create_dir_all(parent).await.map_err(|e| {
+                    Error::Config(format!("Failed to create config directory: {}", e))
+                })?;
             }
         }
 
         let json = serde_json::to_string_pretty(&credentials)
             .map_err(|e| Error::Config(format!("Failed to serialize credentials: {}", e)))?;
 
-        fs::write(&self.file_path, json).await
+        fs::write(&self.file_path, json)
+            .await
             .map_err(|e| Error::Config(format!("Failed to write credentials: {}", e)))?;
 
         // Set file permissions to 0600 (owner read/write only)
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let metadata = fs::metadata(&self.file_path).await
+            let metadata = fs::metadata(&self.file_path)
+                .await
                 .map_err(|e| Error::Config(format!("Failed to get file metadata: {}", e)))?;
             let mut permissions = metadata.permissions();
             permissions.set_mode(0o600);
-            fs::set_permissions(&self.file_path, permissions).await
+            fs::set_permissions(&self.file_path, permissions)
+                .await
                 .map_err(|e| Error::Config(format!("Failed to set file permissions: {}", e)))?;
         }
 
@@ -112,7 +117,8 @@ impl CredentialsStorage for PlaintextStorage {
 
     async fn delete(&self) -> Result<()> {
         if self.file_path.exists() {
-            fs::remove_file(&self.file_path).await
+            fs::remove_file(&self.file_path)
+                .await
                 .map_err(|e| Error::Config(format!("Failed to delete credentials: {}", e)))?;
         }
         Ok(())
@@ -135,13 +141,15 @@ impl KeychainStorage {
 impl CredentialsStorage for KeychainStorage {
     async fn read(&self) -> Result<Option<Credentials>> {
         let username = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-        
+
         let output = tokio::process::Command::new("security")
             .args(&[
                 "find-generic-password",
-                "-a", &username,
+                "-a",
+                &username,
                 "-w",
-                "-s", &self.service_name
+                "-s",
+                &self.service_name,
             ])
             .output()
             .await
@@ -183,9 +191,12 @@ impl CredentialsStorage for KeychainStorage {
             .args(&[
                 "add-generic-password",
                 "-U",
-                "-a", &username,
-                "-s", &self.service_name,
-                "-w", &json
+                "-a",
+                &username,
+                "-s",
+                &self.service_name,
+                "-w",
+                &json,
             ])
             .output()
             .await
@@ -193,7 +204,10 @@ impl CredentialsStorage for KeychainStorage {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(Error::Config(format!("Failed to update keychain: {}", stderr)));
+            return Err(Error::Config(format!(
+                "Failed to update keychain: {}",
+                stderr
+            )));
         }
 
         debug!("Successfully updated keychain credentials");
@@ -202,12 +216,14 @@ impl CredentialsStorage for KeychainStorage {
 
     async fn delete(&self) -> Result<()> {
         let username = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-        
+
         let output = tokio::process::Command::new("security")
             .args(&[
                 "delete-generic-password",
-                "-a", &username,
-                "-s", &self.service_name
+                "-a",
+                &username,
+                "-s",
+                &self.service_name,
             ])
             .output()
             .await
@@ -217,7 +233,10 @@ impl CredentialsStorage for KeychainStorage {
             let stderr = String::from_utf8_lossy(&output.stderr);
             // Ignore "item not found" errors
             if !stderr.contains("SecKeychainSearchCopyNext") {
-                return Err(Error::Config(format!("Failed to delete from keychain: {}", stderr)));
+                return Err(Error::Config(format!(
+                    "Failed to delete from keychain: {}",
+                    stderr
+                )));
             }
         }
 
@@ -238,10 +257,13 @@ impl CombinedStorage {
         } else {
             None
         };
-        
+
         let plaintext = PlaintextStorage::new()?;
-        
-        Ok(Self { keychain, plaintext })
+
+        Ok(Self {
+            keychain,
+            plaintext,
+        })
     }
 }
 
@@ -275,7 +297,10 @@ impl CredentialsStorage for CombinedStorage {
                     return Ok(());
                 }
                 Err(e) => {
-                    debug!("Failed to update keychain, falling back to plaintext: {}", e);
+                    debug!(
+                        "Failed to update keychain, falling back to plaintext: {}",
+                        e
+                    );
                 }
             }
         }
@@ -314,25 +339,27 @@ fn get_config_directory() -> Result<PathBuf> {
     if let Ok(claude_config_dir) = std::env::var("CLAUDE_CONFIG_DIR") {
         return Ok(PathBuf::from(claude_config_dir));
     }
-    
+
     if let Ok(xdg_config_home) = std::env::var("XDG_CONFIG_HOME") {
         return Ok(PathBuf::from(xdg_config_home).join("claude"));
     }
-    
+
     if let Some(home_dir) = dirs::home_dir() {
         return Ok(home_dir.join(".claude"));
     }
-    
-    Err(Error::Config("Cannot determine config directory".to_string()))
+
+    Err(Error::Config(
+        "Cannot determine config directory".to_string(),
+    ))
 }
 
 /// Generate keychain service name with optional hash (JavaScript ti/z41 functions)
 pub fn get_keychain_service_name() -> Result<String> {
     let mut service_name = String::from("Claude Code-credentials");
-    
+
     // If CLAUDE_CONFIG_DIR is set, append hash suffix
     if let Ok(config_dir) = std::env::var("CLAUDE_CONFIG_DIR") {
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(config_dir.as_bytes());
         let hash = format!("{:x}", hasher.finalize());
@@ -340,17 +367,17 @@ pub fn get_keychain_service_name() -> Result<String> {
         service_name.push('-');
         service_name.push_str(suffix);
     }
-    
+
     Ok(service_name)
 }
 
 /// Get service name for API key storage (without -credentials suffix)
 pub fn get_service_name_for_api_key() -> Result<String> {
     let mut service_name = String::from("Claude Code");
-    
+
     // If CLAUDE_CONFIG_DIR is set, append hash suffix
     if let Ok(config_dir) = std::env::var("CLAUDE_CONFIG_DIR") {
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(config_dir.as_bytes());
         let hash = format!("{:x}", hasher.finalize());
@@ -358,7 +385,7 @@ pub fn get_service_name_for_api_key() -> Result<String> {
         service_name.push('-');
         service_name.push_str(suffix);
     }
-    
+
     Ok(service_name)
 }
 

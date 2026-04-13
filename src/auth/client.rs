@@ -1,7 +1,9 @@
 // Client Management Implementation
 // Complete port from client_management_extracted.js
 
+use super::proxy::ProxyConfig;
 use anyhow::{anyhow, bail, Context, Result};
+use futures::stream::{Stream, StreamExt};
 use reqwest::{
     header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYPE, USER_AGENT},
     Client as HttpClient, Method, Response, StatusCode,
@@ -17,8 +19,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
-use futures::stream::{Stream, StreamExt};
-use super::proxy::ProxyConfig;
 
 // Constants from JavaScript
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
@@ -74,31 +74,66 @@ pub enum AnthropicError {
     Base { message: String },
 
     #[error("Bad Request (400): {message}")]
-    BadRequest { status: u16, message: String, request_id: Option<String> },
+    BadRequest {
+        status: u16,
+        message: String,
+        request_id: Option<String>,
+    },
 
     #[error("Authentication Error (401): {message}")]
-    Authentication { status: u16, message: String, request_id: Option<String> },
+    Authentication {
+        status: u16,
+        message: String,
+        request_id: Option<String>,
+    },
 
     #[error("Permission Denied (403): {message}")]
-    PermissionDenied { status: u16, message: String, request_id: Option<String> },
+    PermissionDenied {
+        status: u16,
+        message: String,
+        request_id: Option<String>,
+    },
 
     #[error("Not Found (404): {message}")]
-    NotFound { status: u16, message: String, request_id: Option<String> },
+    NotFound {
+        status: u16,
+        message: String,
+        request_id: Option<String>,
+    },
 
     #[error("Conflict (409): {message}")]
-    Conflict { status: u16, message: String, request_id: Option<String> },
+    Conflict {
+        status: u16,
+        message: String,
+        request_id: Option<String>,
+    },
 
     #[error("Unprocessable Entity (422): {message}")]
-    UnprocessableEntity { status: u16, message: String, request_id: Option<String> },
+    UnprocessableEntity {
+        status: u16,
+        message: String,
+        request_id: Option<String>,
+    },
 
     #[error("Rate Limit (429): {message}")]
-    RateLimit { status: u16, message: String, request_id: Option<String> },
+    RateLimit {
+        status: u16,
+        message: String,
+        request_id: Option<String>,
+    },
 
     #[error("Internal Server Error (500+): {message}")]
-    InternalServer { status: u16, message: String, request_id: Option<String> },
+    InternalServer {
+        status: u16,
+        message: String,
+        request_id: Option<String>,
+    },
 
     #[error("Connection error.")]
-    Connection { message: String, cause: Option<String> },
+    Connection {
+        message: String,
+        cause: Option<String>,
+    },
 
     #[error("Request timed out.")]
     Timeout,
@@ -125,14 +160,46 @@ impl AnthropicError {
             .map(|s| s.to_string());
 
         match status_u16 {
-            400 => Self::BadRequest { status: status_u16, message, request_id },
-            401 => Self::Authentication { status: status_u16, message, request_id },
-            403 => Self::PermissionDenied { status: status_u16, message, request_id },
-            404 => Self::NotFound { status: status_u16, message, request_id },
-            409 => Self::Conflict { status: status_u16, message, request_id },
-            422 => Self::UnprocessableEntity { status: status_u16, message, request_id },
-            429 => Self::RateLimit { status: status_u16, message, request_id },
-            _ if status_u16 >= 500 => Self::InternalServer { status: status_u16, message, request_id },
+            400 => Self::BadRequest {
+                status: status_u16,
+                message,
+                request_id,
+            },
+            401 => Self::Authentication {
+                status: status_u16,
+                message,
+                request_id,
+            },
+            403 => Self::PermissionDenied {
+                status: status_u16,
+                message,
+                request_id,
+            },
+            404 => Self::NotFound {
+                status: status_u16,
+                message,
+                request_id,
+            },
+            409 => Self::Conflict {
+                status: status_u16,
+                message,
+                request_id,
+            },
+            422 => Self::UnprocessableEntity {
+                status: status_u16,
+                message,
+                request_id,
+            },
+            429 => Self::RateLimit {
+                status: status_u16,
+                message,
+                request_id,
+            },
+            _ if status_u16 >= 500 => Self::InternalServer {
+                status: status_u16,
+                message,
+                request_id,
+            },
             _ => Self::Base { message },
         }
     }
@@ -149,7 +216,11 @@ impl AnthropicError {
 fn get_env_var(key: &str) -> Option<String> {
     env::var(key).ok().and_then(|v| {
         let trimmed = v.trim();
-        if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
     })
 }
 
@@ -254,13 +325,14 @@ pub struct ClientConfig {
     pub log_level: String,
     pub fetch_options: Option<HashMap<String, String>>,
     pub default_headers: HeaderMap,
-    pub proxy: Option<ProxyConfig>,  // Added proxy support
+    pub proxy: Option<ProxyConfig>, // Added proxy support
 }
 
 impl Default for ClientConfig {
     fn default() -> Self {
         Self {
-            base_url: get_env_var("ANTHROPIC_BASE_URL").unwrap_or_else(|| DEFAULT_BASE_URL.to_string()),
+            base_url: get_env_var("ANTHROPIC_BASE_URL")
+                .unwrap_or_else(|| DEFAULT_BASE_URL.to_string()),
             api_key: get_env_var("ANTHROPIC_API_KEY"),
             auth_token: get_env_var("ANTHROPIC_AUTH_TOKEN"),
             timeout: Duration::from_millis(DEFAULT_TIMEOUT_MS),
@@ -269,7 +341,7 @@ impl Default for ClientConfig {
             log_level: get_env_var("ANTHROPIC_LOG").unwrap_or_else(|| "warn".to_string()),
             fetch_options: None,
             default_headers: HeaderMap::new(),
-            proxy: ProxyConfig::from_env().ok(),  // Load proxy from environment
+            proxy: ProxyConfig::from_env().ok(), // Load proxy from environment
         }
     }
 }
@@ -297,8 +369,10 @@ impl AnthropicClient {
 
         // Validate log level (middleware17)
         let log_level = validate_log_level(&config.log_level, "ClientOptions.logLevel")
-            .or_else(|| get_env_var("ANTHROPIC_LOG")
-                .and_then(|l| validate_log_level(&l, "process.env['ANTHROPIC_LOG']")))
+            .or_else(|| {
+                get_env_var("ANTHROPIC_LOG")
+                    .and_then(|l| validate_log_level(&l, "process.env['ANTHROPIC_LOG']"))
+            })
             .unwrap_or_else(|| "warn".to_string());
 
         // Ensure fetch is available (checker115)
@@ -308,8 +382,7 @@ impl AnthropicClient {
         final_config.log_level = log_level;
 
         // Build HTTP client with proxy support
-        let mut client_builder = HttpClient::builder()
-            .timeout(final_config.timeout);
+        let mut client_builder = HttpClient::builder().timeout(final_config.timeout);
 
         // Add proxy if configured
         if let Some(ref proxy_config) = final_config.proxy {
@@ -327,7 +400,10 @@ impl AnthropicClient {
             let mut headers = HeaderMap::new();
             if let Some(body) = &options.body {
                 headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-                (headers, Some(serde_json::to_string(body).unwrap_or_default()))
+                (
+                    headers,
+                    Some(serde_json::to_string(body).unwrap_or_default()),
+                )
             } else {
                 (headers, None)
             }
@@ -424,40 +500,57 @@ impl AnthropicClient {
         let prepared_options = self.prepare_options(options).await?;
 
         // buildRequest
-        let (request, url, timeout) = self.build_request(&prepared_options, max_retries - retries_left)?;
+        let (request, url, timeout) =
+            self.build_request(&prepared_options, max_retries - retries_left)?;
 
         // Generate log ID
-        let log_id = log_id.unwrap_or_else(|| {
-            format!("log_{:06x}", (rand::random::<f32>() * 16777216.0) as u32)
-        });
+        let log_id = log_id
+            .unwrap_or_else(|| format!("log_{:06x}", (rand::random::<f32>() * 16777216.0) as u32));
 
-        let retry_of = if log_id.starts_with("log_") { "" } else { &format!(", retryOf: {}", log_id) };
+        let retry_of = if log_id.starts_with("log_") {
+            ""
+        } else {
+            &format!(", retryOf: {}", log_id)
+        };
         let start_time = SystemTime::now();
 
         debug!("[{}] sending request{}", log_id, retry_of);
 
         // Check abort signal
-        if prepared_options.signal.as_ref().map(|s| s.is_aborted()).unwrap_or(false) {
+        if prepared_options
+            .signal
+            .as_ref()
+            .map(|s| s.is_aborted())
+            .unwrap_or(false)
+        {
             return Err(anyhow::anyhow!(AnthropicError::Aborted));
         }
 
         // fetchWithTimeout
         let response_result = self.fetch_with_timeout(request, timeout).await;
-        let duration = SystemTime::now().duration_since(start_time).unwrap_or_default();
+        let duration = SystemTime::now()
+            .duration_since(start_time)
+            .unwrap_or_default();
 
         match response_result {
             Err(e) => {
                 let retry_msg = format!("retrying, {} attempts remaining", retries_left);
 
-                if prepared_options.signal.as_ref().map(|s| s.is_aborted()).unwrap_or(false) {
+                if prepared_options
+                    .signal
+                    .as_ref()
+                    .map(|s| s.is_aborted())
+                    .unwrap_or(false)
+                {
                     return Err(anyhow::anyhow!(AnthropicError::Aborted));
                 }
 
-                let is_timeout = e.downcast_ref::<reqwest::Error>()
+                let is_timeout = e
+                    .downcast_ref::<reqwest::Error>()
                     .map(|re| is_timeout_or_connection_error(re))
-                    .unwrap_or(false) ||
-                    e.to_string().to_lowercase().contains("timed") ||
-                    e.to_string().to_lowercase().contains("timeout");
+                    .unwrap_or(false)
+                    || e.to_string().to_lowercase().contains("timed")
+                    || e.to_string().to_lowercase().contains("timeout");
 
                 if retries_left > 0 {
                     info!(
@@ -472,7 +565,9 @@ impl AnthropicClient {
                         if is_timeout { "timed out" } else { "failed" },
                         retry_msg
                     );
-                    return self.retry_request(prepared_options, retries_left - 1, log_id.clone()).await;
+                    return self
+                        .retry_request(prepared_options, retries_left - 1, log_id.clone())
+                        .await;
                 }
 
                 info!(
@@ -504,11 +599,17 @@ impl AnthropicClient {
                     let error_data: Value = serde_json::from_str(&response_text)
                         .unwrap_or_else(|_| json!({ "message": response_text }));
 
-                    if retries_left > 0 && (status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error()) {
-                        return self.retry_request(prepared_options, retries_left - 1, log_id).await;
+                    if retries_left > 0
+                        && (status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error())
+                    {
+                        return self
+                            .retry_request(prepared_options, retries_left - 1, log_id)
+                            .await;
                     }
 
-                    return Err(anyhow::anyhow!(AnthropicError::from_status(status, error_data, &headers)));
+                    return Err(anyhow::anyhow!(AnthropicError::from_status(
+                        status, error_data, &headers
+                    )));
                 }
 
                 serde_json::from_str(&response_text).context("Failed to parse response JSON")
@@ -528,7 +629,8 @@ impl AnthropicClient {
             let retry_number = max_retries - retries_left;
             let delay_ms = std::cmp::min(1000 * 2_u64.pow(retry_number), 10000);
             sleep(Duration::from_millis(delay_ms)).await;
-            self.make_request(options, Some(retries_left), Some(log_id)).await
+            self.make_request(options, Some(retries_left), Some(log_id))
+                .await
         })
     }
 
@@ -554,9 +656,7 @@ impl AnthropicClient {
         let (body_headers, body) = self.build_body(options);
         let headers = self.build_headers(&method, body_headers, retry_count, options)?;
 
-        let mut request_builder = self.http_client
-            .request(method, &url)
-            .headers(headers);
+        let mut request_builder = self.http_client.request(method, &url).headers(headers);
 
         if let Some(signal) = &options.signal {
             // Handle abort signal if needed
@@ -605,7 +705,9 @@ impl AnthropicClient {
 
         if let Some(body_str) = options.body.as_ref().and_then(|v| v.as_str()) {
             let mut headers = HeaderMap::new();
-            let content_type = options.headers.as_ref()
+            let content_type = options
+                .headers
+                .as_ref()
                 .and_then(|h| h.get(CONTENT_TYPE))
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("text/plain");
@@ -629,7 +731,9 @@ impl AnthropicClient {
 
         // Add idempotency key for non-GET requests
         if method != Method::GET {
-            let key = options.idempotency_key.clone()
+            let key = options
+                .idempotency_key
+                .clone()
                 .unwrap_or_else(|| self.default_idempotency_key());
             idempotency_headers.insert(
                 HeaderName::from_bytes(self.idempotency_header.as_bytes())?,
@@ -685,7 +789,7 @@ impl AnthropicClient {
             Some(idempotency_headers),
             Some(base_headers),
             Some(self.auth_headers()),
-            Some(proxy_headers),  // Add proxy headers
+            Some(proxy_headers), // Add proxy headers
             Some(self.config.default_headers.clone()),
             Some(body_headers),
             options.headers.clone(),
@@ -707,7 +811,10 @@ impl AnthropicClient {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis();
-        let random = format!("{:x}", rand::random::<u32>()).chars().take(9).collect::<String>();
+        let random = format!("{:x}", rand::random::<u32>())
+            .chars()
+            .take(9)
+            .collect::<String>();
         format!("key_{}_{}", timestamp, random)
     }
 
@@ -761,7 +868,12 @@ impl AnthropicClient {
     }
 
     // prepareRequest implementation
-    async fn prepare_request(&self, req: &reqwest::Request, url: &str, options: &RequestOptions) -> Result<()> {
+    async fn prepare_request(
+        &self,
+        req: &reqwest::Request,
+        url: &str,
+        options: &RequestOptions,
+    ) -> Result<()> {
         // Request preparation from JavaScript
         Ok(())
     }
@@ -864,7 +976,11 @@ impl AnthropicClient {
 
         info!("=== SENDING MESSAGE REQUEST TO LLM ===");
         info!("URL: {}", url);
-        info!("Request body: {}", serde_json::to_string_pretty(&request).unwrap_or_else(|_| "Failed to serialize".to_string()));
+        info!(
+            "Request body: {}",
+            serde_json::to_string_pretty(&request)
+                .unwrap_or_else(|_| "Failed to serialize".to_string())
+        );
 
         // Build request with proper headers matching JavaScript SDK (cli-jsdef-fixed.js:191866-191879)
         let mut headers = HeaderMap::new();
@@ -872,7 +988,10 @@ impl AnthropicClient {
         headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
         headers.insert("content-type", HeaderValue::from_static("application/json"));
         headers.insert("x-app", HeaderValue::from_static("cli"));
-        headers.insert("user-agent", HeaderValue::from_static("claude-cli/2.0.72 (external, cli)"));
+        headers.insert(
+            "user-agent",
+            HeaderValue::from_static("claude-cli/2.0.72 (external, cli)"),
+        );
         headers.insert("x-stainless-retry-count", HeaderValue::from_static("0"));
         let idempotency_key = format!("stainless-node-retry-{}", uuid::Uuid::new_v4());
         headers.insert("idempotency-key", HeaderValue::from_str(&idempotency_key)?);
@@ -897,7 +1016,8 @@ impl AnthropicClient {
 
             // Add anthropic-beta header for beta features
             let mut betas = vec!["claude-code-20250219"];
-            if request.model.contains("claude-sonnet-4") || request.model.contains("claude-opus-4") {
+            if request.model.contains("claude-sonnet-4") || request.model.contains("claude-opus-4")
+            {
                 betas.push("interleaved-thinking-2025-05-14");
             }
             let beta_header = betas.join(",");
@@ -915,7 +1035,8 @@ impl AnthropicClient {
         info!("=== END HEADERS ===");
 
         // Make the streaming request
-        let response = self.http_client
+        let response = self
+            .http_client
             .post(&url)
             .headers(headers)
             .json(&request)
@@ -927,7 +1048,10 @@ impl AnthropicClient {
 
         if !response.status().is_success() {
             let status = response.status();
-            let text = response.text().await.unwrap_or_else(|_| "Failed to read error".to_string());
+            let text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Failed to read error".to_string());
             return Err(anyhow!("Request failed with status {}: {}", status, text));
         }
 
@@ -982,7 +1106,10 @@ impl AnthropicClient {
             "messages": request.messages
         });
 
-        let url = format!("{}/v1/messages/count_tokens?beta=true", self.config.base_url);
+        let url = format!(
+            "{}/v1/messages/count_tokens?beta=true",
+            self.config.base_url
+        );
 
         let response = self
             .http_client
@@ -995,11 +1122,21 @@ impl AnthropicClient {
 
         if !response.status().is_success() {
             let status = response.status();
-            let text = response.text().await.unwrap_or_else(|_| "Failed to read error".to_string());
-            return Err(anyhow!("count_tokens failed with status {}: {}", status, text));
+            let text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Failed to read error".to_string());
+            return Err(anyhow!(
+                "count_tokens failed with status {}: {}",
+                status,
+                text
+            ));
         }
 
-        let result: CountTokensResponse = response.json().await.context("Failed to parse count_tokens response")?;
+        let result: CountTokensResponse = response
+            .json()
+            .await
+            .context("Failed to parse count_tokens response")?;
         Ok(result)
     }
 
@@ -1204,15 +1341,23 @@ fn parse_sse_stream(
                     }
 
                     // Parse the JSON data - simplified parsing for now
-                    if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&combined_data) {
+                    if let Ok(json_value) =
+                        serde_json::from_str::<serde_json::Value>(&combined_data)
+                    {
                         // Convert to StreamEvent based on the type field
                         if let Some(event_type) = json_value.get("type").and_then(|v| v.as_str()) {
                             let event = match event_type {
                                 "message_start" => {
                                     // Parse as StreamMessage, not ChatResponse
                                     if let Some(message_obj) = json_value.get("message") {
-                                        if let Ok(stream_msg) = serde_json::from_value::<crate::ai::client::StreamMessage>(message_obj.clone()) {
-                                            crate::ai::client::StreamEvent::MessageStart { message: stream_msg }
+                                        if let Ok(stream_msg) = serde_json::from_value::<
+                                            crate::ai::client::StreamMessage,
+                                        >(
+                                            message_obj.clone()
+                                        ) {
+                                            crate::ai::client::StreamEvent::MessageStart {
+                                                message: stream_msg,
+                                            }
                                         } else {
                                             continue;
                                         }
@@ -1222,12 +1367,22 @@ fn parse_sse_stream(
                                 }
                                 "content_block_start" => {
                                     if let (Some(index), Some(content_block)) = (
-                                        json_value.get("index").and_then(|v| v.as_u64()).map(|i| i as usize),
-                                        json_value.get("content_block")
+                                        json_value
+                                            .get("index")
+                                            .and_then(|v| v.as_u64())
+                                            .map(|i| i as usize),
+                                        json_value.get("content_block"),
                                     ) {
                                         // Parse as ContentBlock, not ContentPart
-                                        if let Ok(content) = serde_json::from_value::<crate::ai::client::ContentBlock>(content_block.clone()) {
-                                            crate::ai::client::StreamEvent::ContentBlockStart { index, content_block: content }
+                                        if let Ok(content) = serde_json::from_value::<
+                                            crate::ai::client::ContentBlock,
+                                        >(
+                                            content_block.clone()
+                                        ) {
+                                            crate::ai::client::StreamEvent::ContentBlockStart {
+                                                index,
+                                                content_block: content,
+                                            }
                                         } else {
                                             continue;
                                         }
@@ -1237,11 +1392,21 @@ fn parse_sse_stream(
                                 }
                                 "content_block_delta" => {
                                     if let (Some(index), Some(delta)) = (
-                                        json_value.get("index").and_then(|v| v.as_u64()).map(|i| i as usize),
-                                        json_value.get("delta")
+                                        json_value
+                                            .get("index")
+                                            .and_then(|v| v.as_u64())
+                                            .map(|i| i as usize),
+                                        json_value.get("delta"),
                                     ) {
-                                        if let Ok(delta_content) = serde_json::from_value::<crate::ai::client::ContentDelta>(delta.clone()) {
-                                            crate::ai::client::StreamEvent::ContentBlockDelta { index, delta: delta_content }
+                                        if let Ok(delta_content) = serde_json::from_value::<
+                                            crate::ai::client::ContentDelta,
+                                        >(
+                                            delta.clone()
+                                        ) {
+                                            crate::ai::client::StreamEvent::ContentBlockDelta {
+                                                index,
+                                                delta: delta_content,
+                                            }
                                         } else {
                                             continue;
                                         }
@@ -1250,7 +1415,11 @@ fn parse_sse_stream(
                                     }
                                 }
                                 "content_block_stop" => {
-                                    if let Some(index) = json_value.get("index").and_then(|v| v.as_u64()).map(|i| i as usize) {
+                                    if let Some(index) = json_value
+                                        .get("index")
+                                        .and_then(|v| v.as_u64())
+                                        .map(|i| i as usize)
+                                    {
                                         crate::ai::client::StreamEvent::ContentBlockStop { index }
                                     } else {
                                         continue;
@@ -1258,17 +1427,30 @@ fn parse_sse_stream(
                                 }
                                 "message_delta" => {
                                     if let Some(delta) = json_value.get("delta") {
-                                        if let Ok(msg_delta) = serde_json::from_value::<crate::ai::client::MessageDelta>(delta.clone()) {
+                                        if let Ok(msg_delta) = serde_json::from_value::<
+                                            crate::ai::client::MessageDelta,
+                                        >(
+                                            delta.clone()
+                                        ) {
                                             // Usage is NOT optional, get it from the JSON or create default
-                                            let usage = json_value.get("usage")
-                                                .and_then(|u| serde_json::from_value::<crate::ai::Usage>(u.clone()).ok())
+                                            let usage = json_value
+                                                .get("usage")
+                                                .and_then(|u| {
+                                                    serde_json::from_value::<crate::ai::Usage>(
+                                                        u.clone(),
+                                                    )
+                                                    .ok()
+                                                })
                                                 .unwrap_or_else(|| crate::ai::Usage {
                                                     input_tokens: 0,
                                                     output_tokens: 0,
                                                     cache_creation_input_tokens: None,
                                                     cache_read_input_tokens: None,
                                                 });
-                                            crate::ai::client::StreamEvent::MessageDelta { delta: msg_delta, usage }
+                                            crate::ai::client::StreamEvent::MessageDelta {
+                                                delta: msg_delta,
+                                                usage,
+                                            }
                                         } else {
                                             continue;
                                         }
@@ -1276,13 +1458,12 @@ fn parse_sse_stream(
                                         continue;
                                     }
                                 }
-                                "message_stop" => {
-                                    crate::ai::client::StreamEvent::MessageStop
-                                }
+                                "message_stop" => crate::ai::client::StreamEvent::MessageStop,
                                 "error" => {
                                     // Error is a tuple variant, not struct
                                     if let Some(error) = json_value.get("error") {
-                                        let error_msg = error.get("message")
+                                        let error_msg = error
+                                            .get("message")
                                             .and_then(|m| m.as_str())
                                             .unwrap_or("Unknown error")
                                             .to_string();
@@ -1405,9 +1586,7 @@ impl AbortSignal {
     }
 
     pub fn is_aborted(&self) -> bool {
-        futures::executor::block_on(async {
-            *self.aborted.read().await
-        })
+        futures::executor::block_on(async { *self.aborted.read().await })
     }
 }
 
@@ -1426,7 +1605,11 @@ impl CompletionsService {
         Self { client }
     }
 
-    pub async fn create(&self, mut params: Value, options: Option<RequestOptions>) -> Result<Value> {
+    pub async fn create(
+        &self,
+        mut params: Value,
+        options: Option<RequestOptions>,
+    ) -> Result<Value> {
         let betas = params.get("betas").cloned();
         if let Some(map) = params.as_object_mut() {
             map.remove("betas");
@@ -1474,7 +1657,11 @@ impl MessagesService {
         }
     }
 
-    pub async fn create(&self, mut params: Value, options: Option<RequestOptions>) -> Result<Value> {
+    pub async fn create(
+        &self,
+        mut params: Value,
+        options: Option<RequestOptions>,
+    ) -> Result<Value> {
         // Check for deprecated models
         if let Some(model) = params.get("model").and_then(|m| m.as_str()) {
             if let Some(eol_date) = DEPRECATED_MODELS.get(model) {
@@ -1524,10 +1711,7 @@ impl ModelsService {
 
         if let Some(headers) = &mut opts.headers {
             if let Some(betas) = headers.get("betas").cloned() {
-                headers.insert(
-                    HeaderName::from_static("anthropic-beta"),
-                    betas,
-                );
+                headers.insert(HeaderName::from_static("anthropic-beta"), betas);
             }
         }
 
@@ -1667,6 +1851,622 @@ impl BedrockClient {
             skip_auth: false,
         })
     }
+
+    /// Transform a ChatRequest into Bedrock-compatible path + body
+    /// Matching JS buildRequest() at cli-jsdef-fixed.js ~293236
+    fn transform_request(
+        &self,
+        request: &crate::ai::ChatRequest,
+        streaming: bool,
+    ) -> Result<(String, Value)> {
+        let mut body =
+            serde_json::to_value(request).context("Failed to serialize ChatRequest for Bedrock")?;
+
+        // Extract and remove model from body (Bedrock puts it in the URL path)
+        // Then map first-party model IDs to Bedrock format
+        let raw_model = body
+            .get("model")
+            .and_then(|m| m.as_str())
+            .ok_or_else(|| anyhow!("ChatRequest missing model field"))?
+            .to_string();
+        let model = crate::ai::map_model_to_bedrock(&raw_model);
+        debug!("Bedrock model mapping: '{}' -> '{}'", raw_model, model);
+
+        if let Some(obj) = body.as_object_mut() {
+            obj.remove("model");
+            // Remove stream from body — Bedrock controls streaming via the path
+            obj.remove("stream");
+            // Remove betas — not used in Bedrock body
+            obj.remove("betas");
+        }
+
+        // Add anthropic_version if not present (required by Bedrock)
+        if let Some(obj) = body.as_object_mut() {
+            if !obj.contains_key("anthropic_version") {
+                obj.insert(
+                    "anthropic_version".to_string(),
+                    Value::String("bedrock-2023-05-31".to_string()),
+                );
+            }
+        }
+
+        // Build the path — model ID goes directly in the path (no URL encoding)
+        // Bedrock model IDs like "us.anthropic.claude-opus-4-1-20250805-v1:0" contain
+        // dots and colons which are valid in URL paths and must NOT be percent-encoded
+        let path = if streaming {
+            format!("/model/{}/invoke-with-response-stream", model)
+        } else {
+            format!("/model/{}/invoke", model)
+        };
+
+        debug!("Bedrock request path: {}", path);
+        Ok((path, body))
+    }
+
+    /// Sign a request using SigV4 or bearer token
+    /// Matching JS auth flow at cli-jsdef-fixed.js ~293260
+    async fn sign_request(
+        &self,
+        headers: &mut HeaderMap,
+        method: &str,
+        path: &str,
+        body: &[u8],
+    ) -> Result<()> {
+        // If skip_auth is set, return immediately (proxy mode)
+        if self.skip_auth {
+            return Ok(());
+        }
+
+        // Check for bearer token (AWS_BEARER_TOKEN_BEDROCK)
+        if let Ok(bearer_token) = env::var("AWS_BEARER_TOKEN_BEDROCK") {
+            if !bearer_token.trim().is_empty() {
+                headers.insert(
+                    AUTHORIZATION,
+                    HeaderValue::from_str(&format!("Bearer {}", bearer_token.trim()))
+                        .context("Invalid bearer token value")?,
+                );
+                return Ok(());
+            }
+        }
+
+        // Use SigV4 signing with stored credentials
+        let credentials =
+            crate::auth::aws::AwsCredentials {
+                access_key_id: self.aws_access_key.clone().ok_or_else(|| {
+                    anyhow!("AWS access key not available for Bedrock SigV4 signing")
+                })?,
+                secret_access_key: self.aws_secret_key.clone().ok_or_else(|| {
+                    anyhow!("AWS secret key not available for Bedrock SigV4 signing")
+                })?,
+                session_token: self.aws_session_token.clone(),
+                expiration: None,
+                credential_scope: None,
+                account_id: None,
+                source: None,
+            };
+
+        let signer =
+            crate::auth::aws::SignatureV4::new(self.aws_region.clone(), "bedrock".to_string());
+
+        signer
+            .sign(method, path, headers, body, &credentials)
+            .await
+            .context("SigV4 signing failed for Bedrock request")?;
+
+        Ok(())
+    }
+
+    /// Send a non-streaming chat request to Bedrock
+    pub async fn chat(&self, request: &crate::ai::ChatRequest) -> Result<crate::ai::ChatResponse> {
+        let (path, body) = self.transform_request(request, false)?;
+        let body_bytes =
+            serde_json::to_vec(&body).context("Failed to serialize Bedrock request body")?;
+
+        let base_url = &self.inner.base.config.base_url;
+
+        // Build headers
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
+
+        // Extract host from base_url for SigV4 (required header)
+        if let Ok(parsed) = reqwest::Url::parse(base_url) {
+            if let Some(host) = parsed.host_str() {
+                if let Ok(hv) = HeaderValue::from_str(host) {
+                    headers.insert("host", hv);
+                }
+            }
+        }
+
+        // Sign the request
+        self.sign_request(&mut headers, "POST", &path, &body_bytes)
+            .await?;
+
+        let url = format!("{}{}", base_url, path);
+
+        let response = self
+            .inner
+            .base
+            .http_client
+            .post(&url)
+            .headers(headers)
+            .body(body_bytes)
+            .send()
+            .await
+            .context("Failed to send Bedrock chat request")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Failed to read error".to_string());
+            return Err(anyhow!(
+                "Bedrock request failed with status {}: {}",
+                status,
+                text
+            ));
+        }
+
+        let response_text = response
+            .text()
+            .await
+            .context("Failed to read Bedrock response body")?;
+
+        serde_json::from_str(&response_text).context("Failed to parse Bedrock chat response")
+    }
+
+    /// Send a streaming chat request to Bedrock
+    pub async fn chat_stream(
+        &self,
+        request: &crate::ai::ChatRequest,
+    ) -> Result<impl Stream<Item = Result<crate::ai::client::StreamEvent>> + Send> {
+        let (path, body) = self.transform_request(request, true)?;
+        let body_bytes = serde_json::to_vec(&body)
+            .context("Failed to serialize Bedrock streaming request body")?;
+
+        let base_url = &self.inner.base.config.base_url;
+
+        // Build headers
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
+
+        // Extract host from base_url for SigV4
+        if let Ok(parsed) = reqwest::Url::parse(base_url) {
+            if let Some(host) = parsed.host_str() {
+                if let Ok(hv) = HeaderValue::from_str(host) {
+                    headers.insert("host", hv);
+                }
+            }
+        }
+
+        // Sign the request
+        self.sign_request(&mut headers, "POST", &path, &body_bytes)
+            .await?;
+
+        let url = format!("{}{}", base_url, path);
+
+        let response = self
+            .inner
+            .base
+            .http_client
+            .post(&url)
+            .headers(headers)
+            .body(body_bytes)
+            .send()
+            .await
+            .context("Failed to send Bedrock streaming request")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Failed to read error".to_string());
+            return Err(anyhow!(
+                "Bedrock streaming request failed with status {}: {}",
+                status,
+                text
+            ));
+        }
+
+        let stream = response.bytes_stream();
+        Ok(parse_bedrock_event_stream(stream))
+    }
+}
+
+/// Parse AWS Event Stream binary format from Bedrock's invoke-with-response-stream.
+///
+/// Each binary frame:
+///   [4 bytes] total message length (u32 big-endian)
+///   [4 bytes] headers length (u32 big-endian)
+///   [4 bytes] prelude CRC32
+///   [N bytes] headers
+///   [M bytes] payload (total_length - headers_length - 16)
+///   [4 bytes] message CRC32
+///
+/// The payload for "chunk" events is JSON: {"bytes": "<base64>"}
+/// where the base64-decoded content is an Anthropic JSON event
+/// (message_start, content_block_delta, etc.)
+fn parse_bedrock_event_stream(
+    stream: impl Stream<Item = reqwest::Result<bytes::Bytes>> + Send + 'static,
+) -> impl Stream<Item = Result<crate::ai::client::StreamEvent>> + Send {
+    use futures::stream;
+
+    struct EventStreamState {
+        buffer: Vec<u8>,
+        event_queue: VecDeque<Result<crate::ai::client::StreamEvent>>,
+    }
+
+    impl EventStreamState {
+        fn new() -> Self {
+            Self {
+                buffer: Vec::new(),
+                event_queue: VecDeque::new(),
+            }
+        }
+
+        /// Try to parse complete frames from the buffer
+        fn process_buffer(&mut self) {
+            loop {
+                // Need at least 12 bytes for the prelude
+                if self.buffer.len() < 12 {
+                    return;
+                }
+
+                // Read total message length from first 4 bytes (big-endian)
+                let total_length = u32::from_be_bytes([
+                    self.buffer[0],
+                    self.buffer[1],
+                    self.buffer[2],
+                    self.buffer[3],
+                ]) as usize;
+
+                // Sanity check
+                if total_length < 16 {
+                    self.event_queue.push_back(Err(anyhow!(
+                        "Bedrock event stream: invalid frame length {}",
+                        total_length
+                    )));
+                    self.buffer.clear();
+                    return;
+                }
+
+                // Wait until we have the complete frame
+                if self.buffer.len() < total_length {
+                    return;
+                }
+
+                // Extract this frame and advance buffer
+                let frame: Vec<u8> = self.buffer.drain(..total_length).collect();
+
+                // Parse headers length
+                let headers_length =
+                    u32::from_be_bytes([frame[4], frame[5], frame[6], frame[7]]) as usize;
+
+                // Skip CRC verification for now (prelude CRC at bytes 8-11, message CRC at end)
+                // The data comes over TLS so corruption is extremely unlikely
+
+                // Parse headers (start after 12-byte prelude)
+                let headers_start = 12;
+                let headers_end = headers_start + headers_length;
+                if headers_end > total_length.saturating_sub(4) {
+                    debug!("Bedrock event stream: headers overflow frame, skipping");
+                    continue;
+                }
+
+                let headers = Self::parse_headers(&frame[headers_start..headers_end]);
+
+                // Extract payload (between headers and final 4-byte CRC)
+                let payload_start = headers_end;
+                let payload_end = total_length - 4;
+                let payload = if payload_start < payload_end {
+                    &frame[payload_start..payload_end]
+                } else {
+                    &[]
+                };
+
+                // Check message type
+                let message_type = headers.get(":message-type").cloned().unwrap_or_default();
+                let event_type = headers.get(":event-type").cloned().unwrap_or_default();
+
+                match message_type.as_str() {
+                    "error" | "exception" => {
+                        let error_code = headers
+                            .get(":error-code")
+                            .or_else(|| headers.get(":exception-type"))
+                            .cloned()
+                            .unwrap_or_else(|| "UnknownError".to_string());
+                        let error_msg = headers
+                            .get(":error-message")
+                            .cloned()
+                            .or_else(|| String::from_utf8(payload.to_vec()).ok())
+                            .unwrap_or_else(|| "Unknown error".to_string());
+                        self.event_queue.push_back(Err(anyhow!(
+                            "Bedrock stream error [{}]: {}",
+                            error_code,
+                            error_msg
+                        )));
+                    }
+                    "event" => {
+                        self.process_event(&event_type, payload);
+                    }
+                    other => {
+                        debug!("Bedrock event stream: unknown message-type '{}'", other);
+                    }
+                }
+            }
+        }
+
+        /// Parse binary headers from an AWS Event Stream frame
+        fn parse_headers(data: &[u8]) -> HashMap<String, String> {
+            let mut headers = HashMap::new();
+            let mut pos = 0;
+
+            while pos < data.len() {
+                // Header name length (1 byte)
+                if pos >= data.len() {
+                    break;
+                }
+                let name_len = data[pos] as usize;
+                pos += 1;
+
+                // Header name
+                if pos + name_len > data.len() {
+                    break;
+                }
+                let name = String::from_utf8_lossy(&data[pos..pos + name_len]).to_string();
+                pos += name_len;
+
+                // Value type (1 byte)
+                if pos >= data.len() {
+                    break;
+                }
+                let value_type = data[pos];
+                pos += 1;
+
+                match value_type {
+                    7 => {
+                        // String type: 2-byte big-endian length + value
+                        if pos + 2 > data.len() {
+                            break;
+                        }
+                        let val_len = u16::from_be_bytes([data[pos], data[pos + 1]]) as usize;
+                        pos += 2;
+                        if pos + val_len > data.len() {
+                            break;
+                        }
+                        let value = String::from_utf8_lossy(&data[pos..pos + val_len]).to_string();
+                        pos += val_len;
+                        headers.insert(name, value);
+                    }
+                    6 => {
+                        // Bytes type: 2-byte big-endian length + value
+                        if pos + 2 > data.len() {
+                            break;
+                        }
+                        let val_len = u16::from_be_bytes([data[pos], data[pos + 1]]) as usize;
+                        pos += 2;
+                        pos += val_len; // Skip binary values
+                    }
+                    0 => { /* bool true - no value bytes */ }
+                    1 => { /* bool false - no value bytes */ }
+                    2 => {
+                        pos += 1;
+                    } // byte
+                    3 => {
+                        pos += 2;
+                    } // short
+                    4 => {
+                        pos += 4;
+                    } // int
+                    5 => {
+                        pos += 8;
+                    } // long
+                    8 => {
+                        pos += 8;
+                    } // timestamp
+                    9 => {
+                        // UUID: 16 bytes
+                        pos += 16;
+                    }
+                    _ => {
+                        debug!(
+                            "Bedrock event stream: unknown header value type {}",
+                            value_type
+                        );
+                        break;
+                    }
+                }
+            }
+
+            headers
+        }
+
+        /// Process an event frame payload
+        fn process_event(&mut self, event_type: &str, payload: &[u8]) {
+            if event_type != "chunk" {
+                debug!("Bedrock event stream: ignoring event type '{}'", event_type);
+                return;
+            }
+
+            // Parse the payload JSON: {"bytes": "<base64-encoded-data>"}
+            let payload_json: Value = match serde_json::from_slice(payload) {
+                Ok(v) => v,
+                Err(e) => {
+                    debug!(
+                        "Bedrock event stream: failed to parse chunk payload JSON: {}",
+                        e
+                    );
+                    return;
+                }
+            };
+
+            let b64_data = match payload_json.get("bytes").and_then(|v| v.as_str()) {
+                Some(s) => s,
+                None => {
+                    debug!("Bedrock event stream: chunk payload missing 'bytes' field");
+                    return;
+                }
+            };
+
+            // Base64-decode to get the Anthropic JSON event
+            let decoded = match base64::Engine::decode(
+                &base64::engine::general_purpose::STANDARD,
+                b64_data,
+            ) {
+                Ok(d) => d,
+                Err(e) => {
+                    debug!("Bedrock event stream: base64 decode failed: {}", e);
+                    return;
+                }
+            };
+
+            let event_json: Value = match serde_json::from_slice(&decoded) {
+                Ok(v) => v,
+                Err(e) => {
+                    debug!(
+                        "Bedrock event stream: failed to parse decoded event JSON: {}",
+                        e
+                    );
+                    return;
+                }
+            };
+
+            // Convert JSON to StreamEvent — same logic as parse_sse_stream
+            if let Some(event_type_str) = event_json.get("type").and_then(|v| v.as_str()) {
+                let event = match event_type_str {
+                    "message_start" => event_json
+                        .get("message")
+                        .and_then(|m| {
+                            serde_json::from_value::<crate::ai::client::StreamMessage>(m.clone())
+                                .ok()
+                        })
+                        .map(|message| crate::ai::client::StreamEvent::MessageStart { message }),
+                    "content_block_start" => {
+                        let index = event_json
+                            .get("index")
+                            .and_then(|v| v.as_u64())
+                            .map(|i| i as usize);
+                        let block = event_json.get("content_block").and_then(|b| {
+                            serde_json::from_value::<crate::ai::client::ContentBlock>(b.clone())
+                                .ok()
+                        });
+                        match (index, block) {
+                            (Some(i), Some(b)) => {
+                                Some(crate::ai::client::StreamEvent::ContentBlockStart {
+                                    index: i,
+                                    content_block: b,
+                                })
+                            }
+                            _ => None,
+                        }
+                    }
+                    "content_block_delta" => {
+                        let index = event_json
+                            .get("index")
+                            .and_then(|v| v.as_u64())
+                            .map(|i| i as usize);
+                        let delta = event_json.get("delta").and_then(|d| {
+                            serde_json::from_value::<crate::ai::client::ContentDelta>(d.clone())
+                                .ok()
+                        });
+                        match (index, delta) {
+                            (Some(i), Some(d)) => {
+                                Some(crate::ai::client::StreamEvent::ContentBlockDelta {
+                                    index: i,
+                                    delta: d,
+                                })
+                            }
+                            _ => None,
+                        }
+                    }
+                    "content_block_stop" => event_json
+                        .get("index")
+                        .and_then(|v| v.as_u64())
+                        .map(|i| i as usize)
+                        .map(|index| crate::ai::client::StreamEvent::ContentBlockStop { index }),
+                    "message_delta" => {
+                        let delta = event_json.get("delta").and_then(|d| {
+                            serde_json::from_value::<crate::ai::client::MessageDelta>(d.clone())
+                                .ok()
+                        });
+                        let usage = event_json
+                            .get("usage")
+                            .and_then(|u| {
+                                serde_json::from_value::<crate::ai::Usage>(u.clone()).ok()
+                            })
+                            .unwrap_or_else(|| crate::ai::Usage {
+                                input_tokens: 0,
+                                output_tokens: 0,
+                                cache_creation_input_tokens: None,
+                                cache_read_input_tokens: None,
+                            });
+                        delta.map(|d| crate::ai::client::StreamEvent::MessageDelta {
+                            delta: d,
+                            usage,
+                        })
+                    }
+                    "message_stop" => Some(crate::ai::client::StreamEvent::MessageStop),
+                    "error" => {
+                        let msg = event_json
+                            .get("error")
+                            .and_then(|e| e.get("message"))
+                            .and_then(|m| m.as_str())
+                            .unwrap_or("Unknown error")
+                            .to_string();
+                        Some(crate::ai::client::StreamEvent::Error(msg))
+                    }
+                    _ => None,
+                };
+
+                if let Some(evt) = event {
+                    self.event_queue.push_back(Ok(evt));
+                }
+            }
+        }
+    }
+
+    let pinned_stream = Box::pin(stream);
+
+    stream::unfold(
+        (pinned_stream, EventStreamState::new()),
+        |(mut stream, mut state)| async move {
+            // Return queued events first
+            if let Some(event) = state.event_queue.pop_front() {
+                return Some((event, (stream, state)));
+            }
+
+            // Read more bytes from the stream
+            loop {
+                match stream.next().await {
+                    Some(Ok(bytes)) => {
+                        state.buffer.extend_from_slice(&bytes);
+                        state.process_buffer();
+
+                        if let Some(event) = state.event_queue.pop_front() {
+                            return Some((event, (stream, state)));
+                        }
+                        // Continue reading if no complete events yet
+                    }
+                    Some(Err(e)) => {
+                        return Some((
+                            Err(anyhow!("Bedrock stream network error: {}", e)),
+                            (stream, state),
+                        ));
+                    }
+                    None => {
+                        // Stream ended — flush any remaining queued events
+                        if let Some(event) = state.event_queue.pop_front() {
+                            return Some((event, (stream, state)));
+                        }
+                        return None;
+                    }
+                }
+            }
+        },
+    )
 }
 
 // Google Vertex AI Client (Class39)
@@ -1888,13 +2688,7 @@ mod tests {
     #[test]
     fn test_bedrock_client() {
         let config = ClientConfig::default();
-        let client = BedrockClient::new(
-            Some("us-west-2".to_string()),
-            None,
-            None,
-            None,
-            config,
-        );
+        let client = BedrockClient::new(Some("us-west-2".to_string()), None, None, None, config);
         assert!(client.is_ok());
         let client = client.unwrap();
         assert_eq!(client.aws_region, "us-west-2");
@@ -1968,11 +2762,109 @@ mod tests {
         );
 
         match err {
-            AnthropicError::RateLimit { status, message, .. } => {
+            AnthropicError::RateLimit {
+                status, message, ..
+            } => {
                 assert_eq!(status, 429);
                 assert_eq!(message, "Rate limited");
             }
             _ => panic!("Wrong error type"),
         }
+    }
+
+    #[test]
+    fn test_bedrock_transform_request() {
+        let config = ClientConfig::default();
+        let client =
+            BedrockClient::new(Some("us-east-1".to_string()), None, None, None, config).unwrap();
+
+        let request = crate::ai::ChatRequest {
+            model: "anthropic.claude-3-sonnet-20240229-v1:0".to_string(),
+            messages: vec![],
+            max_tokens: Some(1024),
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            stop_sequences: None,
+            stream: Some(true),
+            system: None,
+            tools: None,
+            tool_choice: None,
+            metadata: None,
+            betas: Some(vec!["test-beta".to_string()]),
+        };
+
+        let (path, body) = client.transform_request(&request, false).unwrap();
+
+        // Path should use /invoke for non-streaming
+        assert!(path.starts_with("/model/"));
+        assert!(path.ends_with("/invoke"));
+        assert!(path.contains("anthropic.claude-3-sonnet"));
+
+        // Body should NOT contain model, stream, or betas
+        let obj = body.as_object().unwrap();
+        assert!(!obj.contains_key("model"));
+        assert!(!obj.contains_key("stream"));
+        assert!(!obj.contains_key("betas"));
+
+        // Body should contain anthropic_version
+        assert_eq!(
+            obj.get("anthropic_version").and_then(|v| v.as_str()),
+            Some("bedrock-2023-05-31")
+        );
+    }
+
+    #[test]
+    fn test_bedrock_transform_request_streaming() {
+        let config = ClientConfig::default();
+        let client =
+            BedrockClient::new(Some("us-west-2".to_string()), None, None, None, config).unwrap();
+
+        let request = crate::ai::ChatRequest {
+            model: "anthropic.claude-3-haiku-20240307-v1:0".to_string(),
+            messages: vec![],
+            max_tokens: Some(1024),
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            stop_sequences: None,
+            stream: None,
+            system: None,
+            tools: None,
+            tool_choice: None,
+            metadata: None,
+            betas: None,
+        };
+
+        let (path, _body) = client.transform_request(&request, true).unwrap();
+
+        // Path should use /invoke-with-response-stream for streaming
+        assert!(path.ends_with("/invoke-with-response-stream"));
+    }
+
+    #[tokio::test]
+    async fn test_bedrock_skip_auth() {
+        let config = ClientConfig::default();
+        let mut client = BedrockClient::new(
+            Some("us-east-1".to_string()),
+            None, // No secret key
+            None, // No access key
+            None,
+            config,
+        )
+        .unwrap();
+
+        client.skip_auth = true;
+
+        // sign_request should succeed without credentials when skip_auth=true
+        let mut headers = HeaderMap::new();
+        let result = client
+            .sign_request(&mut headers, "POST", "/model/test/invoke", b"{}")
+            .await;
+
+        assert!(result.is_ok());
+        // No Authorization header should be added
+        assert!(!headers.contains_key("Authorization"));
+        assert!(!headers.contains_key("x-amz-date"));
     }
 }

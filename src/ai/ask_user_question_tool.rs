@@ -166,17 +166,25 @@ impl ToolHandler for AskUserQuestionTool {
         "Answer questions?".to_string()
     }
 
-    async fn execute(&self, input: Value, _cancellation_token: Option<CancellationToken>) -> Result<String> {
+    async fn execute(
+        &self,
+        input: Value,
+        _cancellation_token: Option<CancellationToken>,
+    ) -> Result<String> {
         // Parse input
         let parsed_input: AskUserQuestionInput = serde_json::from_value(input.clone())
             .map_err(|e| Error::InvalidInput(format!("Invalid AskUserQuestion input: {}", e)))?;
 
         // Validate questions
         if parsed_input.questions.is_empty() {
-            return Err(Error::InvalidInput("At least one question is required".to_string()));
+            return Err(Error::InvalidInput(
+                "At least one question is required".to_string(),
+            ));
         }
         if parsed_input.questions.len() > 4 {
-            return Err(Error::InvalidInput("Maximum of 4 questions allowed".to_string()));
+            return Err(Error::InvalidInput(
+                "Maximum of 4 questions allowed".to_string(),
+            ));
         }
 
         // Validate each question
@@ -215,10 +223,17 @@ impl ToolHandler for AskUserQuestionTool {
         }
 
         // Check for duplicate questions
-        let question_texts: Vec<&str> = parsed_input.questions.iter().map(|q| q.question.as_str()).collect();
-        let unique_questions: std::collections::HashSet<&str> = question_texts.iter().cloned().collect();
+        let question_texts: Vec<&str> = parsed_input
+            .questions
+            .iter()
+            .map(|q| q.question.as_str())
+            .collect();
+        let unique_questions: std::collections::HashSet<&str> =
+            question_texts.iter().cloned().collect();
         if question_texts.len() != unique_questions.len() {
-            return Err(Error::InvalidInput("Question texts must be unique".to_string()));
+            return Err(Error::InvalidInput(
+                "Question texts must be unique".to_string(),
+            ));
         }
 
         // Build output - the answers come from the UI through the permission component
@@ -228,8 +243,7 @@ impl ToolHandler for AskUserQuestionTool {
         };
 
         // Return JSON output matching JavaScript structure
-        let result = serde_json::to_string(&output)
-            .map_err(|e| Error::Serialization(e))?;
+        let result = serde_json::to_string(&output).map_err(|e| Error::Serialization(e))?;
 
         Ok(result)
     }
@@ -379,6 +393,9 @@ mod tests {
 
         assert_eq!(result["type"], "tool_result");
         assert_eq!(result["tool_use_id"], "test-id");
-        assert!(result["content"].as_str().unwrap().contains("User has answered your questions"));
+        assert!(result["content"]
+            .as_str()
+            .unwrap()
+            .contains("User has answered your questions"));
     }
 }

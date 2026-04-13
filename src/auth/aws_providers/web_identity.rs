@@ -1,5 +1,5 @@
-use super::{Credentials, CredentialProvider, CredentialsProviderError};
 use super::env::{EnvReader, SystemEnvReader};
+use super::{CredentialProvider, Credentials, CredentialsProviderError};
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -86,7 +86,8 @@ pub struct SystemFileReader;
 #[async_trait]
 impl FileReader for SystemFileReader {
     async fn read_to_string(&self, path: &str) -> Result<String> {
-        tokio::fs::read_to_string(path).await
+        tokio::fs::read_to_string(path)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to read file {}: {}", path, e))
     }
 }
@@ -109,11 +110,7 @@ pub struct WebTokenCredentialsProvider {
 
 impl WebTokenCredentialsProvider {
     /// Create a new web token credentials provider
-    pub fn new(
-        web_identity_token: String,
-        role_arn: String,
-        role_session_name: String,
-    ) -> Self {
+    pub fn new(web_identity_token: String, role_arn: String, role_session_name: String) -> Self {
         Self {
             web_identity_token,
             role_arn,
@@ -164,7 +161,10 @@ impl WebTokenCredentialsProvider {
     }
 
     /// Extract account ID from assumed role user ARN
-    fn get_account_id_from_assumed_role_user(&self, assumed_role_user: &AssumedRoleUser) -> Option<String> {
+    fn get_account_id_from_assumed_role_user(
+        &self,
+        assumed_role_user: &AssumedRoleUser,
+    ) -> Option<String> {
         if let Some(ref arn) = assumed_role_user.arn {
             let parts: Vec<&str> = arn.split(':').collect();
             if parts.len() > 4 && !parts[4].is_empty() {
@@ -189,14 +189,19 @@ impl CredentialProvider for WebTokenCredentialsProvider {
 
         // Use the provided role assumer or return error (JavaScript lines 173-186)
         let role_assumer = self.role_assumer.as_ref().ok_or_else(|| {
-            CredentialsProviderError::new("Role assumer with web identity is required but not provided")
+            CredentialsProviderError::new(
+                "Role assumer with web identity is required but not provided",
+            )
         })?;
 
         // Build the request (JavaScript lines 188-196)
         let request = AssumeRoleWithWebIdentityRequest {
             role_arn: self.role_arn.clone(),
             role_session_name: if self.role_session_name.is_empty() {
-                format!("aws-sdk-js-session-{}", chrono::Utc::now().timestamp_millis())
+                format!(
+                    "aws-sdk-js-session-{}",
+                    chrono::Utc::now().timestamp_millis()
+                )
             } else {
                 self.role_session_name.clone()
             },
@@ -208,32 +213,56 @@ impl CredentialProvider for WebTokenCredentialsProvider {
         };
 
         // Call the role assumer
-        let response = role_assumer.assume_role_with_web_identity(request).await
-            .map_err(|e| CredentialsProviderError::new(
-                format!("Failed to assume role with web identity: {}", e)
-            ))?;
+        let response = role_assumer
+            .assume_role_with_web_identity(request)
+            .await
+            .map_err(|e| {
+                CredentialsProviderError::new(format!(
+                    "Failed to assume role with web identity: {}",
+                    e
+                ))
+            })?;
 
         // Validate the response
         let sts_credentials = response.credentials.ok_or_else(|| {
-            CredentialsProviderError::new(
-                format!("Invalid response from STS.assumeRoleWithWebIdentity call with role {}", self.role_arn)
-            ).with_logger(self.logger.clone().unwrap_or_else(|| "fromWebToken".to_string()))
+            CredentialsProviderError::new(format!(
+                "Invalid response from STS.assumeRoleWithWebIdentity call with role {}",
+                self.role_arn
+            ))
+            .with_logger(
+                self.logger
+                    .clone()
+                    .unwrap_or_else(|| "fromWebToken".to_string()),
+            )
         })?;
 
         let access_key_id = sts_credentials.access_key_id.ok_or_else(|| {
-            CredentialsProviderError::new(
-                format!("Invalid response from STS.assumeRoleWithWebIdentity call with role {}", self.role_arn)
-            ).with_logger(self.logger.clone().unwrap_or_else(|| "fromWebToken".to_string()))
+            CredentialsProviderError::new(format!(
+                "Invalid response from STS.assumeRoleWithWebIdentity call with role {}",
+                self.role_arn
+            ))
+            .with_logger(
+                self.logger
+                    .clone()
+                    .unwrap_or_else(|| "fromWebToken".to_string()),
+            )
         })?;
 
         let secret_access_key = sts_credentials.secret_access_key.ok_or_else(|| {
-            CredentialsProviderError::new(
-                format!("Invalid response from STS.assumeRoleWithWebIdentity call with role {}", self.role_arn)
-            ).with_logger(self.logger.clone().unwrap_or_else(|| "fromWebToken".to_string()))
+            CredentialsProviderError::new(format!(
+                "Invalid response from STS.assumeRoleWithWebIdentity call with role {}",
+                self.role_arn
+            ))
+            .with_logger(
+                self.logger
+                    .clone()
+                    .unwrap_or_else(|| "fromWebToken".to_string()),
+            )
         })?;
 
         // Extract account ID if available
-        let account_id = response.assumed_role_user
+        let account_id = response
+            .assumed_role_user
             .as_ref()
             .and_then(|user| self.get_account_id_from_assumed_role_user(user));
 
@@ -263,7 +292,10 @@ impl CredentialProvider for WebTokenCredentialsProvider {
 ///
 /// This implements the fromTokenFile functionality from the JavaScript code
 /// at lines 203-233 in the extracted file.
-pub struct TokenFileCredentialsProvider<E: EnvReader = SystemEnvReader, F: FileReader = SystemFileReader> {
+pub struct TokenFileCredentialsProvider<
+    E: EnvReader = SystemEnvReader,
+    F: FileReader = SystemFileReader,
+> {
     web_identity_token_file: Option<String>,
     role_arn: Option<String>,
     role_session_name: Option<String>,
@@ -312,7 +344,11 @@ impl<E: EnvReader, F: FileReader> TokenFileCredentialsProvider<E, F> {
     }
 
     /// Create a new token file credentials provider with custom readers and logger
-    pub fn with_readers_and_logger(env_reader: E, file_reader: F, logger: impl Into<String>) -> Self {
+    pub fn with_readers_and_logger(
+        env_reader: E,
+        file_reader: F,
+        logger: impl Into<String>,
+    ) -> Self {
         Self {
             web_identity_token_file: None,
             role_arn: None,
@@ -361,39 +397,68 @@ impl<E: EnvReader, F: FileReader> CredentialProvider for TokenFileCredentialsPro
         }
 
         // Get configuration from environment variables or provided values (JavaScript lines 207-210)
-        let token_file = self.web_identity_token_file.clone()
+        let token_file = self
+            .web_identity_token_file
+            .clone()
             .or_else(|| self.env_reader.get_var(AWS_WEB_IDENTITY_TOKEN_FILE));
 
-        let role_arn = self.role_arn.clone()
+        let role_arn = self
+            .role_arn
+            .clone()
             .or_else(|| self.env_reader.get_var(AWS_ROLE_ARN));
 
-        let role_session_name = self.role_session_name.clone()
+        let role_session_name = self
+            .role_session_name
+            .clone()
             .or_else(|| self.env_reader.get_var(AWS_ROLE_SESSION_NAME));
 
         // Validate required parameters (JavaScript lines 211-217)
         let token_file = token_file.ok_or_else(|| {
-            CredentialsProviderError::new("Web identity configuration not specified")
-                .with_logger(self.logger.clone().unwrap_or_else(|| "fromTokenFile".to_string()))
+            CredentialsProviderError::new("Web identity configuration not specified").with_logger(
+                self.logger
+                    .clone()
+                    .unwrap_or_else(|| "fromTokenFile".to_string()),
+            )
         })?;
 
         let role_arn = role_arn.ok_or_else(|| {
-            CredentialsProviderError::new("Web identity configuration not specified")
-                .with_logger(self.logger.clone().unwrap_or_else(|| "fromTokenFile".to_string()))
+            CredentialsProviderError::new("Web identity configuration not specified").with_logger(
+                self.logger
+                    .clone()
+                    .unwrap_or_else(|| "fromTokenFile".to_string()),
+            )
         })?;
 
         // Read the token from file (JavaScript lines 218-225)
-        let web_identity_token = self.file_reader.read_to_string(&token_file).await
-            .map_err(|e| CredentialsProviderError::new(
-                format!("Failed to read web identity token file {}: {}", token_file, e)
-            ).with_logger(self.logger.clone().unwrap_or_else(|| "fromTokenFile".to_string())))?;
+        let web_identity_token =
+            self.file_reader
+                .read_to_string(&token_file)
+                .await
+                .map_err(|e| {
+                    CredentialsProviderError::new(format!(
+                        "Failed to read web identity token file {}: {}",
+                        token_file, e
+                    ))
+                    .with_logger(
+                        self.logger
+                            .clone()
+                            .unwrap_or_else(|| "fromTokenFile".to_string()),
+                    )
+                })?;
 
         // Trim whitespace from token
         let web_identity_token = web_identity_token.trim().to_string();
 
         if web_identity_token.is_empty() {
-            return Err(CredentialsProviderError::new(
-                format!("Web identity token file {} is empty", token_file)
-            ).with_logger(self.logger.clone().unwrap_or_else(|| "fromTokenFile".to_string()))
+            return Err(CredentialsProviderError::new(format!(
+                "Web identity token file {} is empty",
+                token_file
+            ))
+            .with_logger(
+                self.logger
+                    .clone()
+                    .unwrap_or_else(|| "fromTokenFile".to_string()),
+            )
             .into());
         }
 
@@ -401,14 +466,20 @@ impl<E: EnvReader, F: FileReader> CredentialProvider for TokenFileCredentialsPro
         let web_token_provider = WebTokenCredentialsProvider::new(
             web_identity_token,
             role_arn,
-            role_session_name.unwrap_or_else(|| format!("aws-sdk-js-session-{}", chrono::Utc::now().timestamp_millis())),
+            role_session_name.unwrap_or_else(|| {
+                format!(
+                    "aws-sdk-js-session-{}",
+                    chrono::Utc::now().timestamp_millis()
+                )
+            }),
         );
 
         // For this implementation, we need a role assumer. In a real implementation,
         // this would be provided or created by default. For now, we'll return an error.
         return Err(CredentialsProviderError::new(
-            "Role assumer with web identity is required for token file provider"
-        ).into());
+            "Role assumer with web identity is required for token file provider",
+        )
+        .into());
 
         // JavaScript lines 226-232 show setting credential feature for env vars usage
         // This would be implemented when we have the actual credentials:
@@ -450,8 +521,8 @@ pub fn from_token_file_with_options(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::env::MockEnvReader;
+    use super::*;
     use std::collections::HashMap;
 
     /// Mock role assumer for testing
@@ -468,7 +539,11 @@ mod tests {
             }
         }
 
-        fn with_response(mut self, role_arn: &str, response: AssumeRoleWithWebIdentityResponse) -> Self {
+        fn with_response(
+            mut self,
+            role_arn: &str,
+            response: AssumeRoleWithWebIdentityResponse,
+        ) -> Self {
             self.responses.insert(role_arn.to_string(), response);
             self
         }
@@ -555,23 +630,30 @@ mod tests {
 
         let role_assumer = Arc::new(
             MockRoleAssumerWithWebIdentity::new()
-                .with_response("arn:aws:iam::123456789012:role/test-role", response)
+                .with_response("arn:aws:iam::123456789012:role/test-role", response),
         );
 
         let provider = WebTokenCredentialsProvider::new(
             "mock-web-token".to_string(),
             "arn:aws:iam::123456789012:role/test-role".to_string(),
             "test-session".to_string(),
-        ).with_role_assumer(role_assumer);
+        )
+        .with_role_assumer(role_assumer);
 
         let credentials = provider.provide_credentials().await.unwrap();
 
         assert_eq!(credentials.access_key_id, "web_access_key");
         assert_eq!(credentials.secret_access_key, "web_secret_key");
-        assert_eq!(credentials.session_token, Some("web_session_token".to_string()));
+        assert_eq!(
+            credentials.session_token,
+            Some("web_session_token".to_string())
+        );
         assert_eq!(credentials.credential_scope, Some("us-east-1".to_string()));
         assert_eq!(credentials.account_id, Some("123456789012".to_string()));
-        assert_eq!(credentials.credential_provider, Some("CREDENTIALS_STS_ASSUME_ROLE_WEB_ID".to_string()));
+        assert_eq!(
+            credentials.credential_provider,
+            Some("CREDENTIALS_STS_ASSUME_ROLE_WEB_ID".to_string())
+        );
         assert_eq!(credentials.credential_provider_value, Some("k".to_string()));
     }
 
@@ -605,14 +687,15 @@ mod tests {
 
         let role_assumer = Arc::new(
             MockRoleAssumerWithWebIdentity::new()
-                .with_response("arn:aws:iam::123456789012:role/test-role", response)
+                .with_response("arn:aws:iam::123456789012:role/test-role", response),
         );
 
         let provider = WebTokenCredentialsProvider::new(
             "mock-web-token".to_string(),
             "arn:aws:iam::123456789012:role/test-role".to_string(),
             "".to_string(), // Empty session name
-        ).with_role_assumer(role_assumer);
+        )
+        .with_role_assumer(role_assumer);
 
         let credentials = provider.provide_credentials().await.unwrap();
 
@@ -635,7 +718,7 @@ mod tests {
 
         let role_assumer = Arc::new(
             MockRoleAssumerWithWebIdentity::new()
-                .with_response("arn:aws:iam::123456789012:role/test-role", response)
+                .with_response("arn:aws:iam::123456789012:role/test-role", response),
         );
 
         let provider = WebTokenCredentialsProvider::new(
@@ -670,10 +753,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_token_file_credentials_missing_role_arn() {
-        let env_reader = MockEnvReader::new()
-            .with_var(AWS_WEB_IDENTITY_TOKEN_FILE, "/path/to/token");
-        let file_reader = MockFileReader::new()
-            .with_file("/path/to/token", "mock-token");
+        let env_reader =
+            MockEnvReader::new().with_var(AWS_WEB_IDENTITY_TOKEN_FILE, "/path/to/token");
+        let file_reader = MockFileReader::new().with_file("/path/to/token", "mock-token");
 
         let provider = TokenFileCredentialsProvider::with_readers(env_reader, file_reader);
         let result = provider.provide_credentials().await;
@@ -703,8 +785,7 @@ mod tests {
         let env_reader = MockEnvReader::new()
             .with_var(AWS_WEB_IDENTITY_TOKEN_FILE, "/path/to/token")
             .with_var(AWS_ROLE_ARN, "arn:aws:iam::123456789012:role/test-role");
-        let file_reader = MockFileReader::new()
-            .with_file("/path/to/token", "  \n  "); // Whitespace only
+        let file_reader = MockFileReader::new().with_file("/path/to/token", "  \n  "); // Whitespace only
 
         let provider = TokenFileCredentialsProvider::with_readers(env_reader, file_reader);
         let result = provider.provide_credentials().await;
@@ -720,8 +801,7 @@ mod tests {
             .with_var(AWS_WEB_IDENTITY_TOKEN_FILE, "/path/to/token")
             .with_var(AWS_ROLE_ARN, "arn:aws:iam::123456789012:role/test-role")
             .with_var(AWS_ROLE_SESSION_NAME, "test-session");
-        let file_reader = MockFileReader::new()
-            .with_file("/path/to/token", "mock-token");
+        let file_reader = MockFileReader::new().with_file("/path/to/token", "mock-token");
 
         let provider = TokenFileCredentialsProvider::with_readers(env_reader, file_reader);
         let result = provider.provide_credentials().await;
@@ -734,8 +814,7 @@ mod tests {
     #[tokio::test]
     async fn test_token_file_credentials_with_provided_values() {
         let env_reader = MockEnvReader::new();
-        let file_reader = MockFileReader::new()
-            .with_file("/custom/path/token", "mock-token");
+        let file_reader = MockFileReader::new().with_file("/custom/path/token", "mock-token");
 
         let provider = TokenFileCredentialsProvider::with_readers(env_reader, file_reader)
             .with_web_identity_token_file("/custom/path/token".to_string())

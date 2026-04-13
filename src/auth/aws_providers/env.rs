@@ -1,4 +1,6 @@
-use super::{Credentials, CredentialProvider, CredentialsProviderError, parse_credential_expiration};
+use super::{
+    parse_credential_expiration, CredentialProvider, Credentials, CredentialsProviderError,
+};
 use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -131,16 +133,24 @@ impl<E: EnvReader> CredentialProvider for FromEnv<E> {
         if let (Some(access_key_id), Some(secret_access_key)) = (access_key_id, secret_access_key) {
             if !access_key_id.is_empty() && !secret_access_key.is_empty() {
                 // Get optional environment variables
-                let session_token = self.env_reader.get_var(AWS_SESSION_TOKEN)
+                let session_token = self
+                    .env_reader
+                    .get_var(AWS_SESSION_TOKEN)
                     .filter(|s| !s.is_empty());
 
-                let expiration = self.env_reader.get_var(AWS_CREDENTIAL_EXPIRATION)
+                let expiration = self
+                    .env_reader
+                    .get_var(AWS_CREDENTIAL_EXPIRATION)
                     .and_then(|s| parse_credential_expiration(&s));
 
-                let credential_scope = self.env_reader.get_var(AWS_CREDENTIAL_SCOPE)
+                let credential_scope = self
+                    .env_reader
+                    .get_var(AWS_CREDENTIAL_SCOPE)
                     .filter(|s| !s.is_empty());
 
-                let account_id = self.env_reader.get_var(AWS_ACCOUNT_ID)
+                let account_id = self
+                    .env_reader
+                    .get_var(AWS_ACCOUNT_ID)
                     .filter(|s| !s.is_empty());
 
                 // Build credentials object matching JavaScript structure
@@ -169,8 +179,9 @@ impl<E: EnvReader> CredentialProvider for FromEnv<E> {
         }
 
         // Throw error if credentials not found (JavaScript lines 830-835)
-        let error = CredentialsProviderError::new("Unable to find environment variable credentials.")
-            .with_logger(self.logger.clone().unwrap_or_else(|| "fromEnv".to_string()));
+        let error =
+            CredentialsProviderError::new("Unable to find environment variable credentials.")
+                .with_logger(self.logger.clone().unwrap_or_else(|| "fromEnv".to_string()));
 
         Err(error.into())
     }
@@ -209,16 +220,21 @@ mod tests {
 
         assert_eq!(credentials.access_key_id, "test_access_key");
         assert_eq!(credentials.secret_access_key, "test_secret_key");
-        assert_eq!(credentials.session_token, Some("test_session_token".to_string()));
-        assert_eq!(credentials.credential_provider, Some("CREDENTIALS_ENV_VARS".to_string()));
+        assert_eq!(
+            credentials.session_token,
+            Some("test_session_token".to_string())
+        );
+        assert_eq!(
+            credentials.credential_provider,
+            Some("CREDENTIALS_ENV_VARS".to_string())
+        );
         assert_eq!(credentials.credential_provider_value, Some("p".to_string()));
     }
 
     #[tokio::test]
     async fn test_from_env_missing_access_key() {
-        let env_reader = MockEnvReader::new()
-            .with_var(AWS_SECRET_ACCESS_KEY, "test_secret_key");
-            // AWS_ACCESS_KEY_ID is not set
+        let env_reader = MockEnvReader::new().with_var(AWS_SECRET_ACCESS_KEY, "test_secret_key");
+        // AWS_ACCESS_KEY_ID is not set
 
         let provider = FromEnv::with_env_reader(env_reader);
         let result = provider.provide_credentials().await;
@@ -230,9 +246,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_from_env_missing_secret_key() {
-        let env_reader = MockEnvReader::new()
-            .with_var(AWS_ACCESS_KEY_ID, "test_access_key");
-            // AWS_SECRET_ACCESS_KEY is not set
+        let env_reader = MockEnvReader::new().with_var(AWS_ACCESS_KEY_ID, "test_access_key");
+        // AWS_SECRET_ACCESS_KEY is not set
 
         let provider = FromEnv::with_env_reader(env_reader);
         let result = provider.provide_credentials().await;
@@ -284,7 +299,10 @@ mod tests {
 
         assert_eq!(credentials.access_key_id, "test_access_key");
         assert_eq!(credentials.secret_access_key, "test_secret_key");
-        assert_eq!(credentials.session_token, Some("test_session_token".to_string()));
+        assert_eq!(
+            credentials.session_token,
+            Some("test_session_token".to_string())
+        );
         assert!(credentials.expiration.is_some());
         assert_eq!(credentials.credential_scope, Some("us-east-1".to_string()));
         assert_eq!(credentials.account_id, Some("123456789012".to_string()));

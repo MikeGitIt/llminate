@@ -1,5 +1,5 @@
-use std::env;
 use std::collections::HashMap;
+use std::env;
 use tracing::debug;
 
 /// Mask API key for secure display
@@ -72,7 +72,9 @@ pub fn parse_custom_headers() -> Option<HashMap<String, String>> {
 }
 
 /// Parse custom headers with dependency injection for testing
-pub fn parse_custom_headers_with_reader(env_reader: &dyn EnvReader) -> Option<HashMap<String, String>> {
+pub fn parse_custom_headers_with_reader(
+    env_reader: &dyn EnvReader,
+) -> Option<HashMap<String, String>> {
     let custom_headers_str = env_reader.get_var("ANTHROPIC_CUSTOM_HEADERS")?;
     debug!("Parsing custom headers from environment");
     parse_custom_headers_from_string(&custom_headers_str)
@@ -171,10 +173,7 @@ pub async fn resolve_api_key_with_reader(
 }
 
 /// Public API that uses the system environment
-pub async fn resolve_api_key(
-    require_key: bool,
-    approved_keys: Option<&[String]>,
-) -> ApiKeySource {
+pub async fn resolve_api_key(require_key: bool, approved_keys: Option<&[String]>) -> ApiKeySource {
     resolve_api_key_with_reader(require_key, approved_keys, &SystemEnvReader).await
 }
 
@@ -191,7 +190,10 @@ mod tests {
         assert_eq!(mask_api_key("short"), "*****");
 
         // Test long key (23 chars: show first 3, mask 16, show last 4)
-        assert_eq!(mask_api_key("verylongapikey123456789"), "ver****************6789");
+        assert_eq!(
+            mask_api_key("verylongapikey123456789"),
+            "ver****************6789"
+        );
 
         // Test empty
         assert_eq!(mask_api_key(""), "");
@@ -200,7 +202,7 @@ mod tests {
     #[test]
     fn test_is_api_key_approved() {
         let approved = vec![
-            "sk-********5678".to_string(),  // Masked version of "sk-ant-12345678"
+            "sk-********5678".to_string(), // Masked version of "sk-ant-12345678"
             "ant***wxyz".to_string(),
         ];
 
@@ -229,7 +231,7 @@ mod tests {
         };
         mock_env.vars.insert(
             "ANTHROPIC_CUSTOM_HEADERS".to_string(),
-            "X-Test:testvalue,X-Another:anothervalue".to_string()
+            "X-Test:testvalue,X-Another:anothervalue".to_string(),
         );
 
         let headers = parse_custom_headers_with_reader(&mock_env);
@@ -270,7 +272,9 @@ mod tests {
         let mut mock_env = MockEnvReader {
             vars: HashMap::new(),
         };
-        mock_env.vars.insert("ANTHROPIC_API_KEY".to_string(), "test-api-key".to_string());
+        mock_env
+            .vars
+            .insert("ANTHROPIC_API_KEY".to_string(), "test-api-key".to_string());
 
         // Test with require_key = true
         let result = resolve_api_key_with_reader(true, None, &mock_env).await;
@@ -288,16 +292,21 @@ mod tests {
         let mut mock_env = MockEnvReader {
             vars: HashMap::new(),
         };
-        mock_env.vars.insert("ANTHROPIC_API_KEY".to_string(), "sk-ant-12345678".to_string());
+        mock_env.vars.insert(
+            "ANTHROPIC_API_KEY".to_string(),
+            "sk-ant-12345678".to_string(),
+        );
 
-        let approved = vec!["sk-********5678".to_string()];  // Correct masked format
+        let approved = vec!["sk-********5678".to_string()]; // Correct masked format
 
         let result = resolve_api_key_with_reader(false, Some(&approved), &mock_env).await;
         assert_eq!(result.source, ApiKeySourceType::EnvironmentVariable);
         assert_eq!(result.key, Some("sk-ant-12345678".to_string()));
 
         // Test with non-approved key
-        mock_env.vars.insert("ANTHROPIC_API_KEY".to_string(), "different-key".to_string());
+        mock_env
+            .vars
+            .insert("ANTHROPIC_API_KEY".to_string(), "different-key".to_string());
         let result = resolve_api_key_with_reader(false, Some(&approved), &mock_env).await;
         assert_eq!(result.source, ApiKeySourceType::None);
         assert_eq!(result.key, None);

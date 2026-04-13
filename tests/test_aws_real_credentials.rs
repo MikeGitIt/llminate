@@ -1,4 +1,4 @@
-use llminate::auth::aws::{DefaultCredentialProvider, CredentialProvider, SignatureV4};
+use llminate::auth::aws::{CredentialProvider, DefaultCredentialProvider, SignatureV4};
 use reqwest::header::HeaderMap;
 
 #[tokio::test]
@@ -31,7 +31,10 @@ async fn test_credentials_with_sts(creds: &llminate::auth::aws::AwsCredentials) 
 
     let mut headers = HeaderMap::new();
     headers.insert("Host", "sts.amazonaws.com".parse().unwrap());
-    headers.insert("Content-Type", "application/x-www-form-urlencoded".parse().unwrap());
+    headers.insert(
+        "Content-Type",
+        "application/x-www-form-urlencoded".parse().unwrap(),
+    );
 
     let body = b"Action=GetCallerIdentity&Version=2011-06-15";
 

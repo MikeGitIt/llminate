@@ -10,9 +10,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-static TELEMETRY_CLIENT: Lazy<Arc<TelemetryClient>> = Lazy::new(|| {
-    Arc::new(TelemetryClient::new())
-});
+static TELEMETRY_CLIENT: Lazy<Arc<TelemetryClient>> =
+    Lazy::new(|| Arc::new(TelemetryClient::new()));
 
 static SESSION_ID: Lazy<String> = Lazy::new(|| Uuid::new_v4().to_string());
 
@@ -35,17 +34,17 @@ struct TelemetryEvent {
 impl TelemetryClient {
     fn new() -> Self {
         let (sender, mut receiver) = mpsc::unbounded_channel::<TelemetryEvent>();
-        
+
         // Spawn background task to handle telemetry
         tokio::spawn(async move {
             let mut batch = Vec::new();
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
-            
+
             loop {
                 tokio::select! {
                     Some(event) = receiver.recv() => {
                         batch.push(event);
-                        
+
                         // Send batch if it gets too large
                         if batch.len() >= 100 {
                             send_batch(&batch).await;
@@ -62,7 +61,7 @@ impl TelemetryClient {
                 }
             }
         });
-        
+
         Self {
             sender,
             user_id: Mutex::new(None),
@@ -76,7 +75,7 @@ async fn send_batch(events: &[TelemetryEvent]) {
     if std::env::var("LLMINATE_TELEMETRY_DISABLED").is_ok() {
         return;
     }
-    
+
     // In production, this would send to a telemetry endpoint
     if cfg!(debug_assertions) {
         tracing::debug!("Would send telemetry batch: {} events", events.len());
@@ -87,26 +86,30 @@ async fn send_batch(events: &[TelemetryEvent]) {
 pub async fn init() {
     // Set up any global telemetry configuration
     let client = TELEMETRY_CLIENT.clone();
-    
+
     // Try to load user ID from config
     if let Ok(config) = crate::config::get_merged_config() {
         if let Some(user_id) = config.extra.get("userId").and_then(|v| v.as_str()) {
             client.user_id.lock().replace(user_id.to_string());
         }
     }
-    
+
     // Track session start
-    track("session_start", json!({
-        "version": crate::VERSION,
-        "platform": std::env::consts::OS,
-        "arch": std::env::consts::ARCH,
-    })).await;
+    track(
+        "session_start",
+        json!({
+            "version": crate::VERSION,
+            "platform": std::env::consts::OS,
+            "arch": std::env::consts::ARCH,
+        }),
+    )
+    .await;
 }
 
 /// Track an event
 pub async fn track<T: Serialize>(event_name: impl Into<String>, properties: T) {
     let client = TELEMETRY_CLIENT.clone();
-    
+
     let mut props = HashMap::new();
     if let Ok(value) = serde_json::to_value(properties) {
         if let Value::Object(map) = value {
@@ -115,13 +118,13 @@ pub async fn track<T: Serialize>(event_name: impl Into<String>, properties: T) {
             }
         }
     }
-    
+
     // Add session data
     let session_data = client.session_data.lock();
     for (k, v) in session_data.iter() {
         props.insert(k.clone(), v.clone());
     }
-    
+
     let event = TelemetryEvent {
         event_name: event_name.into(),
         properties: props,
@@ -132,7 +135,7 @@ pub async fn track<T: Serialize>(event_name: impl Into<String>, properties: T) {
         session_id: SESSION_ID.clone(),
         user_id: client.user_id.lock().clone(),
     };
-    
+
     // Send event (ignore if channel is closed)
     let _ = client.sender.send(event);
 }
@@ -145,7 +148,10 @@ pub fn set_user_id(user_id: Option<String>) {
 /// Add session-wide properties
 pub fn set_session_property(key: impl Into<String>, value: impl Serialize) {
     if let Ok(value) = serde_json::to_value(value) {
-        TELEMETRY_CLIENT.session_data.lock().insert(key.into(), value);
+        TELEMETRY_CLIENT
+            .session_data
+            .lock()
+            .insert(key.into(), value);
     }
 }
 
@@ -164,70 +170,62 @@ impl Timer {
             properties: HashMap::new(),
         }
     }
-    
+
     pub fn add_property(mut self, key: impl Into<String>, value: impl Serialize) -> Self {
         if let Ok(value) = serde_json::to_value(value) {
             self.properties.insert(key.into(), value);
         }
         self
     }
-    
+
     pub async fn finish(mut self) {
         let duration_ms = self.start.elapsed().as_millis() as u64;
-        self.properties.insert("duration_ms".to_string(), json!(duration_ms));
+        self.properties
+            .insert("duration_ms".to_string(), json!(duration_ms));
         track(&self.event_name, self.properties).await;
     }
 }
 
 /// Track API calls
-pub async fn track_api_call(
-    endpoint: &str,
-    method: &str,
-    status_code: u16,
-    duration_ms: u64,
-) {
-    track("api_call", json!({
-        "endpoint": endpoint,
-        "method": method,
-        "status_code": status_code,
-        "duration_ms": duration_ms,
-        "success": status_code >= 200 && status_code < 300,
-    })).await;
+pub async fn track_api_call(endpoint: &str, method: &str, status_code: u16, duration_ms: u64) {
+    track(
+        "api_call",
+        json!({
+            "endpoint": endpoint,
+            "method": method,
+            "status_code": status_code,
+            "duration_ms": duration_ms,
+            "success": status_code >= 200 && status_code < 300,
+        }),
+    )
+    .await;
 }
 
 /// Track tool usage
-pub async fn track_tool_use(
-    tool_name: &str,
-    success: bool,
-    duration_ms: Option<u64>,
-) {
+pub async fn track_tool_use(tool_name: &str, success: bool, duration_ms: Option<u64>) {
     let mut props = json!({
         "tool_name": tool_name,
         "success": success,
     });
-    
+
     if let Some(duration) = duration_ms {
         props["duration_ms"] = json!(duration);
     }
-    
+
     track("tool_use", props).await;
 }
 
 /// Track errors
-pub async fn track_error(
-    error_type: &str,
-    message: &str,
-    context: Option<HashMap<String, Value>>,
-) {
+pub async fn track_error(error_type: &str, message: &str, context: Option<HashMap<String, Value>>) {
     let mut props = json!({
         "error_type": error_type,
         "message": message,
     });
-    
+
     if let Some(ctx) = context {
         props["context"] = json!(ctx);
     }
-    
+
     track("error", props).await;
 }
 
@@ -241,11 +239,11 @@ pub async fn track_feature(
         "feature_name": feature_name,
         "action": action,
     });
-    
+
     if let Some(meta) = metadata {
         props["metadata"] = json!(meta);
     }
-    
+
     track("feature_use", props).await;
 }
 
@@ -257,18 +255,22 @@ pub async fn track_session_end(
     total_tokens_output: u64,
     total_cost_usd: f64,
 ) {
-    track("session_end", json!({
-        "total_messages": total_messages,
-        "total_duration_ms": total_duration_ms,
-        "total_tokens_input": total_tokens_input,
-        "total_tokens_output": total_tokens_output,
-        "total_cost_usd": total_cost_usd,
-        "average_response_time_ms": if total_messages > 0 {
-            total_duration_ms / total_messages as u64
-        } else {
-            0
-        },
-    })).await;
+    track(
+        "session_end",
+        json!({
+            "total_messages": total_messages,
+            "total_duration_ms": total_duration_ms,
+            "total_tokens_input": total_tokens_input,
+            "total_tokens_output": total_tokens_output,
+            "total_cost_usd": total_cost_usd,
+            "average_response_time_ms": if total_messages > 0 {
+                total_duration_ms / total_messages as u64
+            } else {
+                0
+            },
+        }),
+    )
+    .await;
 }
 
 /// Get current session ID

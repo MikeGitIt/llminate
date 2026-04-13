@@ -1,11 +1,11 @@
 use crate::ai::tools::ToolHandler;
 use crate::error::{Error, Result};
-use tokio_util::sync::CancellationToken;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs;
 use std::path::Path;
+use tokio_util::sync::CancellationToken;
 
 /// Jupyter notebook structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,7 +47,7 @@ impl CellSource {
             CellSource::Array(lines) => lines.join(""),
         }
     }
-    
+
     /// Create from a string
     pub fn from_string(s: String) -> Self {
         // Split into lines if contains newlines
@@ -70,7 +70,7 @@ impl ToolHandler for NotebookReadTool {
     fn description(&self) -> String {
         "Reads a Jupyter notebook (.ipynb file) and returns all of the cells with their outputs. Jupyter notebooks are interactive documents that combine code, text, and visualizations, commonly used for data analysis and scientific computing. The notebook_path parameter must be an absolute path, not a relative path.".to_string()
     }
-    
+
     fn input_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -88,42 +88,47 @@ impl ToolHandler for NotebookReadTool {
             "additionalProperties": false
         })
     }
-    
-    async fn execute(&self, input: Value, _cancellation_token: Option<CancellationToken>) -> Result<String> {
+
+    async fn execute(
+        &self,
+        input: Value,
+        _cancellation_token: Option<CancellationToken>,
+    ) -> Result<String> {
         let notebook_path = input["notebook_path"]
             .as_str()
             .ok_or_else(|| Error::InvalidInput("Missing 'notebook_path' field".to_string()))?;
-        
+
         let cell_id = input["cell_id"].as_str();
-        
+
         // Check if file exists
         let path = Path::new(notebook_path);
         if !path.exists() {
             return Err(Error::NotFound(format!("Invalid notebook path")));
         }
-        
+
         // Check if it's a .ipynb file
         if path.extension().and_then(|s| s.to_str()) != Some("ipynb") {
-            return Err(Error::InvalidInput("File must be a Jupyter notebook (.ipynb file).".to_string()));
+            return Err(Error::InvalidInput(
+                "File must be a Jupyter notebook (.ipynb file).".to_string(),
+            ));
         }
-        
+
         // Read the notebook file
-        let content = fs::read_to_string(path)
-            .map_err(|e| Error::Io(e))?;
-        
+        let content = fs::read_to_string(path).map_err(|e| Error::Io(e))?;
+
         // Parse the JSON
         let notebook: Value = serde_json::from_str(&content)
             .map_err(|e| Error::InvalidInput(format!("Invalid notebook format: {}", e)))?;
-        
+
         // Get language from metadata (matches JavaScript: config8205.metadata.language_info?.name ?? "python")
         let language = notebook["metadata"]["language_info"]["name"]
             .as_str()
             .unwrap_or("python");
-        
-        let cells = notebook["cells"]
-            .as_array()
-            .ok_or_else(|| Error::InvalidInput("Invalid notebook format: missing cells array".to_string()))?;
-        
+
+        let cells = notebook["cells"].as_array().ok_or_else(|| {
+            Error::InvalidInput("Invalid notebook format: missing cells array".to_string())
+        })?;
+
         // If cell_id is specified, find that specific cell (matches JavaScript logic)
         if let Some(id) = cell_id {
             // Look for cell with matching ID
@@ -134,20 +139,23 @@ impl ToolHandler for NotebookReadTool {
                     }
                 }
             }
-            
-            return Err(Error::InvalidInput(format!("Cell with ID \"{}\" not found in notebook", id)));
+
+            return Err(Error::InvalidInput(format!(
+                "Cell with ID \"{}\" not found in notebook",
+                id
+            )));
         }
-        
+
         // Return all cells (matches JavaScript: map each cell)
         let formatted_cells: Vec<String> = cells
             .iter()
             .enumerate()
             .map(|(i, cell)| format_cell_js_style(cell, i, language, false))
             .collect();
-        
+
         Ok(formatted_cells.join("\n"))
     }
-    
+
     fn action_description(&self, input: &Value) -> String {
         if let Some(path) = input["notebook_path"].as_str() {
             format!("Read notebook: {}", path)
@@ -155,7 +163,7 @@ impl ToolHandler for NotebookReadTool {
             "Read Jupyter notebook".to_string()
         }
     }
-    
+
     fn permission_details(&self, input: &Value) -> String {
         if let Some(path) = input["notebook_path"].as_str() {
             format!("Read notebook at {}", path)
@@ -177,18 +185,21 @@ fn parse_cell_id(id: &str) -> Option<usize> {
 }
 
 /// Format a cell matching JavaScript stringDecoder238 function
-fn format_cell_js_style(cell: &Value, index: usize, language: &str, is_single_cell: bool) -> String {
+fn format_cell_js_style(
+    cell: &Value,
+    index: usize,
+    language: &str,
+    is_single_cell: bool,
+) -> String {
     // Get cell ID (matches: input20325.id ?? `cell-${config8199}`)
     let cell_id = cell["id"]
         .as_str()
         .map(|s| s.to_string())
         .unwrap_or_else(|| format!("cell-{}", index));
-    
+
     // Get cell type
-    let cell_type = cell["cell_type"]
-        .as_str()
-        .unwrap_or("code");
-    
+    let cell_type = cell["cell_type"].as_str().unwrap_or("code");
+
     // Get source (matches: Array.isArray(input20325.source) ? input20325.source.join("") : input20325.source)
     let source = if let Some(arr) = cell["source"].as_array() {
         arr.iter()
@@ -200,33 +211,36 @@ fn format_cell_js_style(cell: &Value, index: usize, language: &str, is_single_ce
     } else {
         String::new()
     };
-    
+
     // Build cell representation matching JavaScript format
     let mut result = String::new();
-    
+
     // Add cell header with XML-like format (matches stringDecoder239)
     result.push_str(&format!("<cell id=\"{}\">\n", cell_id));
-    
+
     // Add cell type if not code
     if cell_type != "code" {
         result.push_str(&format!("<cell_type>{}</cell_type>\n", cell_type));
     }
-    
+
     // Add language for code cells if not python
     if cell_type == "code" && language != "python" {
         result.push_str(&format!("<language>{}</language>\n", language));
     }
-    
+
     // Add source
     result.push_str(&source);
     if !source.ends_with('\n') {
         result.push('\n');
     }
-    
+
     // Handle outputs for code cells
     if cell_type == "code" {
         if let Some(outputs) = cell["outputs"].as_array() {
-            if !outputs.is_empty() && (is_single_cell || serde_json::to_string(&outputs).unwrap_or_default().len() <= 10000) {
+            if !outputs.is_empty()
+                && (is_single_cell
+                    || serde_json::to_string(&outputs).unwrap_or_default().len() <= 10000)
+            {
                 for output in outputs {
                     result.push_str(&format_output_js_style(output));
                 }
@@ -236,27 +250,28 @@ fn format_cell_js_style(cell: &Value, index: usize, language: &str, is_single_ce
             }
         }
     }
-    
+
     // Add execution count if present
     if let Some(count) = cell["execution_count"].as_u64() {
         result.push_str(&format!("\n[Execution count: {}]\n", count));
     }
-    
+
     result.push_str(&format!("</cell id=\"{}\">\n", cell_id));
-    
+
     result
 }
 
 /// Format output matching JavaScript func264 function
 fn format_output_js_style(output: &Value) -> String {
     let output_type = output["output_type"].as_str().unwrap_or("");
-    
+
     match output_type {
         "stream" => {
             if let Some(text) = output["text"].as_str() {
                 format!("\n{}\n", text)
             } else if let Some(arr) = output["text"].as_array() {
-                let text = arr.iter()
+                let text = arr
+                    .iter()
                     .filter_map(|v| v.as_str())
                     .collect::<Vec<_>>()
                     .join("");
@@ -273,7 +288,8 @@ fn format_output_js_style(output: &Value) -> String {
                     if let Some(s) = text_plain.as_str() {
                         result.push_str(&format!("\n{}\n", s));
                     } else if let Some(arr) = text_plain.as_array() {
-                        let text = arr.iter()
+                        let text = arr
+                            .iter()
                             .filter_map(|v| v.as_str())
                             .collect::<Vec<_>>()
                             .join("");
@@ -300,7 +316,7 @@ fn format_output_js_style(output: &Value) -> String {
             };
             format!("\n{}: {}\n{}\n", ename, evalue, traceback)
         }
-        _ => String::new()
+        _ => String::new(),
     }
 }
 
@@ -312,7 +328,7 @@ impl ToolHandler for NotebookEditTool {
     fn description(&self) -> String {
         "Completely replaces the contents of a specific cell in a Jupyter notebook (.ipynb file) with new source. Jupyter notebooks are interactive documents that combine code, text, and visualizations, commonly used for data analysis and scientific computing. The notebook_path parameter must be an absolute path, not a relative path. The cell_number is 0-indexed. Use edit_mode=insert to add a new cell at the index specified by cell_number. Use edit_mode=delete to delete the cell at the index specified by cell_number.".to_string()
     }
-    
+
     fn input_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -344,56 +360,63 @@ impl ToolHandler for NotebookEditTool {
             "additionalProperties": false
         })
     }
-    
-    async fn execute(&self, input: Value, _cancellation_token: Option<CancellationToken>) -> Result<String> {
+
+    async fn execute(
+        &self,
+        input: Value,
+        _cancellation_token: Option<CancellationToken>,
+    ) -> Result<String> {
         let notebook_path = input["notebook_path"]
             .as_str()
             .ok_or_else(|| Error::InvalidInput("Missing 'notebook_path' field".to_string()))?;
-        
+
         let new_source = input["new_source"]
             .as_str()
             .ok_or_else(|| Error::InvalidInput("Missing 'new_source' field".to_string()))?;
-        
+
         let cell_id = input["cell_id"].as_str();
         let cell_type = input["cell_type"].as_str();
         let edit_mode = input["edit_mode"].as_str().unwrap_or("replace");
-        
+
         // Check if file exists
         let path = Path::new(notebook_path);
         if !path.exists() {
             return Err(Error::NotFound(format!("Notebook file does not exist.")));
         }
-        
+
         // Check if it's a .ipynb file
         if path.extension().and_then(|s| s.to_str()) != Some("ipynb") {
             return Err(Error::InvalidInput("File must be a Jupyter notebook (.ipynb file). For editing other file types, use the FileEdit tool.".to_string()));
         }
-        
+
         // Validate edit mode
         if edit_mode != "replace" && edit_mode != "insert" && edit_mode != "delete" {
-            return Err(Error::InvalidInput("Edit mode must be replace, insert, or delete.".to_string()));
+            return Err(Error::InvalidInput(
+                "Edit mode must be replace, insert, or delete.".to_string(),
+            ));
         }
-        
+
         // Validate insert mode requires cell_type
         if edit_mode == "insert" && cell_type.is_none() {
-            return Err(Error::InvalidInput("Cell type is required when using edit_mode=insert.".to_string()));
+            return Err(Error::InvalidInput(
+                "Cell type is required when using edit_mode=insert.".to_string(),
+            ));
         }
-        
+
         // Read the notebook file
-        let content = fs::read_to_string(path)
-            .map_err(|e| Error::Io(e))?;
-        
+        let content = fs::read_to_string(path).map_err(|e| Error::Io(e))?;
+
         // Parse the JSON
         let mut notebook: Value = serde_json::from_str(&content)
             .map_err(|_e| Error::InvalidInput(format!("Notebook is not valid JSON.")))?;
-        
+
         // Find cell index matching JavaScript logic
         let mut cell_index = None;
         if let Some(id) = cell_id {
-            let cells_arr = notebook["cells"]
-                .as_array()
-                .ok_or_else(|| Error::InvalidInput("Invalid notebook format: missing cells array".to_string()))?;
-            
+            let cells_arr = notebook["cells"].as_array().ok_or_else(|| {
+                Error::InvalidInput("Invalid notebook format: missing cells array".to_string())
+            })?;
+
             // Check if it matches Gu function pattern
             if let Some(idx) = parse_cell_id(id) {
                 if idx < cells_arr.len() {
@@ -401,41 +424,49 @@ impl ToolHandler for NotebookEditTool {
                 }
             } else {
                 // Look for cell with matching ID
-                cell_index = cells_arr.iter().position(|cell| {
-                    cell["id"].as_str().map(|cid| cid == id).unwrap_or(false)
-                });
+                cell_index = cells_arr
+                    .iter()
+                    .position(|cell| cell["id"].as_str().map(|cid| cid == id).unwrap_or(false));
             }
-            
+
             if cell_index.is_none() && edit_mode != "insert" {
                 if let Some(idx) = parse_cell_id(id) {
-                    return Err(Error::InvalidInput(format!("Cell with index {} does not exist in notebook.", idx)));
+                    return Err(Error::InvalidInput(format!(
+                        "Cell with index {} does not exist in notebook.",
+                        idx
+                    )));
                 } else {
-                    return Err(Error::InvalidInput(format!("Cell with ID \"{}\" not found in notebook.", id)));
+                    return Err(Error::InvalidInput(format!(
+                        "Cell with ID \"{}\" not found in notebook.",
+                        id
+                    )));
                 }
             }
         } else if edit_mode != "insert" {
-            return Err(Error::InvalidInput("Cell ID must be specified when not inserting a new cell.".to_string()));
+            return Err(Error::InvalidInput(
+                "Cell ID must be specified when not inserting a new cell.".to_string(),
+            ));
         }
-        
+
         // Get cells array for mutation (do this after reading nbformat values)
         // This needs to be done just before the match to avoid borrow conflicts
-        
+
         // Perform the edit operation matching JavaScript implementation
         let mut actual_edit_mode = edit_mode.to_string();
-        
+
         // Read nbformat values before getting mutable cells (avoids borrow conflict)
         let nbformat = notebook["nbformat"].as_u64().unwrap_or(0);
         let nbformat_minor = notebook["nbformat_minor"].as_u64().unwrap_or(0);
-        
+
         // Now get the mutable cells array
-        let cells = notebook["cells"]
-            .as_array_mut()
-            .ok_or_else(|| Error::InvalidInput("Invalid notebook format: missing cells array".to_string()))?;
-        
+        let cells = notebook["cells"].as_array_mut().ok_or_else(|| {
+            Error::InvalidInput("Invalid notebook format: missing cells array".to_string())
+        })?;
+
         match edit_mode {
             "replace" => {
                 let idx = cell_index.unwrap_or(0);
-                
+
                 // Special case: if replacing at end, switch to insert (matches JS)
                 if idx == cells.len() {
                     actual_edit_mode = "insert".to_string();
@@ -451,7 +482,7 @@ impl ToolHandler for NotebookEditTool {
                     // Replace existing cell
                     let cell = &mut cells[idx];
                     cell["source"] = json!(new_source);
-                    
+
                     // Update cell type if specified
                     if let Some(ct) = cell_type {
                         if ct != cell["cell_type"].as_str().unwrap_or("") {
@@ -473,32 +504,32 @@ impl ToolHandler for NotebookEditTool {
             }
             "insert" => {
                 let insert_pos = if let Some(idx) = cell_index {
-                    idx + 1  // Insert after the found cell
+                    idx + 1 // Insert after the found cell
                 } else {
-                    0  // Insert at beginning if no cell_id specified
+                    0 // Insert at beginning if no cell_id specified
                 };
-                
+
                 // Generate cell ID if nbformat >= 4.5
                 let cell_id_val = if nbformat > 4 || (nbformat == 4 && nbformat_minor >= 5) {
                     Some(generate_cell_id())
                 } else {
                     cell_id.map(|s| s.to_string())
                 };
-                
+
                 let mut new_cell = json!({
                     "cell_type": cell_type.unwrap_or("code"),
                     "source": new_source,
                     "metadata": {}
                 });
-                
+
                 if let Some(id) = cell_id_val {
                     new_cell["id"] = json!(id);
                 }
-                
+
                 if cell_type.unwrap_or("code") == "code" {
                     new_cell["outputs"] = json!([]);
                 }
-                
+
                 if insert_pos >= cells.len() {
                     cells.push(new_cell);
                 } else {
@@ -507,39 +538,44 @@ impl ToolHandler for NotebookEditTool {
             }
             "delete" => {
                 let idx = cell_index.ok_or_else(|| {
-                    Error::InvalidInput("Cell ID must be specified for delete operation.".to_string())
+                    Error::InvalidInput(
+                        "Cell ID must be specified for delete operation.".to_string(),
+                    )
                 })?;
                 cells.remove(idx);
             }
-            _ => unreachable!()
+            _ => unreachable!(),
         }
-        
+
         // Write the notebook back with formatting matching JavaScript (null, 1)
-        let updated_content = serde_json::to_string_pretty(&notebook)
-            .map_err(|e| Error::Serialization(e))?;
-        
-        fs::write(path, updated_content)
-            .map_err(|e| Error::Io(e))?;
-        
+        let updated_content =
+            serde_json::to_string_pretty(&notebook).map_err(|e| Error::Serialization(e))?;
+
+        fs::write(path, updated_content).map_err(|e| Error::Io(e))?;
+
         // Return result matching JavaScript mapToolResultToToolResultBlockParam
-        let truncated_source = if new_source.len() > 50 { 
-            format!("{}...", &new_source[..50]) 
-        } else { 
-            new_source.to_string() 
+        let truncated_source = if new_source.len() > 50 {
+            format!("{}...", &new_source[..50])
+        } else {
+            new_source.to_string()
         };
-        
+
         match actual_edit_mode.as_str() {
-            "replace" => Ok(format!("Updated cell {} with {}", 
-                cell_id.unwrap_or("0"), 
-                truncated_source)),
-            "insert" => Ok(format!("Inserted cell {} with {}", 
-                cell_id.unwrap_or("new"), 
-                truncated_source)),
+            "replace" => Ok(format!(
+                "Updated cell {} with {}",
+                cell_id.unwrap_or("0"),
+                truncated_source
+            )),
+            "insert" => Ok(format!(
+                "Inserted cell {} with {}",
+                cell_id.unwrap_or("new"),
+                truncated_source
+            )),
             "delete" => Ok(format!("Deleted cell {}", cell_id.unwrap_or("unknown"))),
-            _ => Ok("Unknown edit mode".to_string())
+            _ => Ok("Unknown edit mode".to_string()),
         }
     }
-    
+
     fn action_description(&self, input: &Value) -> String {
         let mode = input["edit_mode"].as_str().unwrap_or("replace");
         if let Some(path) = input["notebook_path"].as_str() {
@@ -548,7 +584,7 @@ impl ToolHandler for NotebookEditTool {
             format!("Edit Jupyter notebook ({})", mode)
         }
     }
-    
+
     fn permission_details(&self, input: &Value) -> String {
         let mode = input["edit_mode"].as_str().unwrap_or("replace");
         if let Some(path) = input["notebook_path"].as_str() {

@@ -1,9 +1,9 @@
-use llminate::auth::proxy::*;
 use llminate::auth::client::*;
+use llminate::auth::proxy::*;
 use reqwest::header::{HeaderMap, HeaderValue, PROXY_AUTHORIZATION};
 use std::env;
+use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
-use wiremock::matchers::{method, path, header};
 
 #[test]
 fn test_basic_auth_header_generation() {
@@ -55,7 +55,8 @@ fn test_proxy_url_parsing_with_credentials() {
 #[test]
 fn test_url_encoded_credentials_in_proxy_url() {
     // Test special characters in username and password
-    let (_, auth) = parse_proxy_url("http://user%40company.com:pass%23word%21@proxy.com:3128").unwrap();
+    let (_, auth) =
+        parse_proxy_url("http://user%40company.com:pass%23word%21@proxy.com:3128").unwrap();
 
     if let Some(ProxyAuth::Basic { username, password }) = auth {
         assert_eq!(username, "user@company.com");
@@ -147,8 +148,12 @@ fn test_proxy_auth_enum_variants() {
             username: "admin".to_string(),
             password: "admin123".to_string(),
         }),
-    ).unwrap();
-    assert_eq!(headers.get(PROXY_AUTHORIZATION).unwrap(), "Basic YWRtaW46YWRtaW4xMjM=");
+    )
+    .unwrap();
+    assert_eq!(
+        headers.get(PROXY_AUTHORIZATION).unwrap(),
+        "Basic YWRtaW46YWRtaW4xMjM="
+    );
 
     // Test Bearer variant
     headers.clear();
@@ -157,8 +162,12 @@ fn test_proxy_auth_enum_variants() {
         Some(ProxyAuth::Bearer {
             token: "jwt-token-here".to_string(),
         }),
-    ).unwrap();
-    assert_eq!(headers.get(PROXY_AUTHORIZATION).unwrap(), "Bearer jwt-token-here");
+    )
+    .unwrap();
+    assert_eq!(
+        headers.get(PROXY_AUTHORIZATION).unwrap(),
+        "Bearer jwt-token-here"
+    );
 
     // Test Raw variant
     headers.clear();
@@ -167,8 +176,12 @@ fn test_proxy_auth_enum_variants() {
         Some(ProxyAuth::Raw {
             value: "Custom auth-scheme-value".to_string(),
         }),
-    ).unwrap();
-    assert_eq!(headers.get(PROXY_AUTHORIZATION).unwrap(), "Custom auth-scheme-value");
+    )
+    .unwrap();
+    assert_eq!(
+        headers.get(PROXY_AUTHORIZATION).unwrap(),
+        "Custom auth-scheme-value"
+    );
 }
 
 #[test]
@@ -236,18 +249,15 @@ async fn test_proxy_headers_in_request() {
     let client = AnthropicClient::new(config).unwrap();
 
     let options = RequestOptions::default();
-    let headers = client.build_headers(
-        &reqwest::Method::POST,
-        HeaderMap::new(),
-        0,
-        &options,
-    ).unwrap();
+    let headers = client
+        .build_headers(&reqwest::Method::POST, HeaderMap::new(), 0, &options)
+        .unwrap();
 
     // Check that proxy auth header is included
     assert!(headers.contains_key(PROXY_AUTHORIZATION));
     assert_eq!(
         headers.get(PROXY_AUTHORIZATION).unwrap(),
-        "Basic cHJveHl1c2VyOnByb3h5cGFzcw=="  // base64("proxyuser:proxypass")
+        "Basic cHJveHl1c2VyOnByb3h5cGFzcw==" // base64("proxyuser:proxypass")
     );
 }
 
@@ -270,12 +280,9 @@ async fn test_no_proxy_bypass_in_client() {
         ..Default::default()
     };
 
-    let headers = client.build_headers(
-        &reqwest::Method::GET,
-        HeaderMap::new(),
-        0,
-        &options,
-    ).unwrap();
+    let headers = client
+        .build_headers(&reqwest::Method::GET, HeaderMap::new(), 0, &options)
+        .unwrap();
 
     // Should NOT have proxy auth header for localhost
     assert!(!headers.contains_key(PROXY_AUTHORIZATION));
@@ -290,16 +297,14 @@ fn test_environment_variable_priority() {
     // which could affect other tests, so it's commented out
     // but shows the expected behavior
 
-    /*
-    env::set_var("HTTP_PROXY", "http://low-priority:8080");
-    env::set_var("HTTPS_PROXY", "https://high-priority:8443");
-
-    let config = ProxyConfig::from_env().unwrap();
-    assert_eq!(config.url, Some("https://high-priority:8443".to_string()));
-
-    env::remove_var("HTTPS_PROXY");
-    env::remove_var("HTTP_PROXY");
-    */
+    // env::set_var("HTTP_PROXY", "http://low-priority:8080");
+    // env::set_var("HTTPS_PROXY", "https://high-priority:8443");
+    //
+    // let config = ProxyConfig::from_env().unwrap();
+    // assert_eq!(config.url, Some("https://high-priority:8443".to_string()));
+    //
+    // env::remove_var("HTTPS_PROXY");
+    // env::remove_var("HTTP_PROXY");
 }
 
 #[test]
@@ -307,16 +312,14 @@ fn test_anthropic_bearer_token_from_env() {
     // Test would set ANTHROPIC_AUTH_TOKEN env var
     // Commented out to avoid affecting other tests
 
-    /*
-    env::set_var("ANTHROPIC_AUTH_TOKEN", "test-bearer-token");
-
-    let config = ProxyConfig::from_env().unwrap();
-    assert_eq!(config.auth_token, Some("test-bearer-token".to_string()));
-
-    let mut headers = HeaderMap::new();
-    config.add_proxy_auth(&mut headers).unwrap();
-    assert_eq!(headers.get(PROXY_AUTHORIZATION).unwrap(), "Bearer test-bearer-token");
-
-    env::remove_var("ANTHROPIC_AUTH_TOKEN");
-    */
+    // env::set_var("ANTHROPIC_AUTH_TOKEN", "test-bearer-token");
+    //
+    // let config = ProxyConfig::from_env().unwrap();
+    // assert_eq!(config.auth_token, Some("test-bearer-token".to_string()));
+    //
+    // let mut headers = HeaderMap::new();
+    // config.add_proxy_auth(&mut headers).unwrap();
+    // assert_eq!(headers.get(PROXY_AUTHORIZATION).unwrap(), "Bearer test-bearer-token");
+    //
+    // env::remove_var("ANTHROPIC_AUTH_TOKEN");
 }

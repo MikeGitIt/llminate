@@ -10,9 +10,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-static CONFIG_CACHE: Lazy<Arc<RwLock<ConfigCache>>> = Lazy::new(|| {
-    Arc::new(RwLock::new(ConfigCache::default()))
-});
+static CONFIG_CACHE: Lazy<Arc<RwLock<ConfigCache>>> =
+    Lazy::new(|| Arc::new(RwLock::new(ConfigCache::default())));
 
 #[derive(Debug, Default)]
 struct ConfigCache {
@@ -47,31 +46,31 @@ pub struct Config {
     pub model: Option<String>,
     pub verbose: Option<bool>,
     pub api_key_helper: Option<String>,
-    
+
     // Features
     pub todo_feature_enabled: Option<bool>,
     pub memory_usage_count: Option<u32>,
     pub prompt_queue_use_count: Option<u32>,
-    
+
     // Installation status
     pub has_completed_onboarding: Option<bool>,
     pub last_onboarding_version: Option<String>,
     pub auto_updater_status: Option<String>,
     pub num_startups: Option<u32>,
-    
+
     // MCP servers
     pub mcp_servers: Option<HashMap<String, McpServerConfig>>,
     pub enabled_mcpjson_servers: Option<Vec<String>>,
     pub disabled_mcpjson_servers: Option<Vec<String>>,
     pub enable_all_project_mcp_servers: Option<bool>,
-    
+
     // Terminal setup
     pub shift_enter_key_binding_installed: Option<bool>,
     pub option_as_meta_key_installed: Option<bool>,
-    
+
     // GitHub integration
     pub github_action_setup_count: Option<u32>,
-    
+
     // Session data
     pub last_cost: Option<f64>,
     pub last_duration: Option<u64>,
@@ -83,61 +82,61 @@ pub struct Config {
     pub last_total_cache_creation_input_tokens: Option<u64>,
     pub last_total_cache_read_input_tokens: Option<u64>,
     pub last_session_id: Option<String>,
-    
+
     // AI configuration
     pub ai_config: Option<crate::ai::AIConfig>,
-    
+
     // Logging configuration
     pub logging_config: Option<LoggingConfig>,
-    
+
     // Task tool configuration
     pub parallel_tasks_count: Option<usize>,
-    
+
     // Authentication
     pub oauth_account: Option<serde_json::Value>, // Complex object, using Value for now
-    
+
     // API key management
     pub custom_api_key_responses: Option<serde_json::Value>,
-    
+
     // Environment variables
     pub env: Option<HashMap<String, String>>,
-    
+
     // Editor settings
     pub editor_mode: Option<String>,
-    
+
     // Auto compact
     pub auto_compact_enabled: Option<bool>,
-    
+
     // Diff tool
     pub diff_tool: Option<String>,
-    
+
     // Data sharing
     pub initial_data_sharing_message_seen: Option<bool>,
     pub is_qualified_for_data_sharing: Option<bool>,
-    
+
     // Fallback settings
     pub fallback_available_warning_threshold: Option<f64>,
-    
+
     // Subscription
     pub recommended_subscription: Option<String>,
-    
+
     // Cost acknowledgement
     pub has_acknowledged_cost_threshold: Option<bool>,
-    
+
     // Tips and hints
     pub tips_history: Option<HashMap<String, u32>>,
     pub has_seen_tasks_hint: Option<bool>,
     pub queued_command_up_hint_count: Option<u32>,
-    
+
     // Notification settings
     pub message_idle_notif_threshold_ms: Option<u64>,
-    
+
     // Bypass permissions
     pub bypass_permissions_mode_accepted: Option<bool>,
-    
+
     // Cached data
     pub cached_changelog: Option<String>,
-    
+
     // Terminal settings
     pub has_used_backslash_return: Option<bool>,
     pub iterm2_backup_path: Option<String>,
@@ -154,20 +153,20 @@ pub struct Config {
 #[serde(rename_all = "camelCase")]
 pub struct LoggingConfig {
     // Core control
-    pub default_level: Option<String>,                      // "debug", "info", "warn", "error"
-    pub module_levels: Option<HashMap<String, String>>,     // Module-specific overrides
-    
+    pub default_level: Option<String>, // "debug", "info", "warn", "error"
+    pub module_levels: Option<HashMap<String, String>>, // Module-specific overrides
+
     // Output targets
     pub enable_file_logging: Option<bool>,
-    pub enable_stderr_logging: Option<bool>, 
+    pub enable_stderr_logging: Option<bool>,
     pub enable_json_logging: Option<bool>,
-    
+
     // Formatting
-    pub format_style: Option<String>,                       // "compact", "full", "pretty", "json"
+    pub format_style: Option<String>, // "compact", "full", "pretty", "json"
     pub include_timestamps: Option<bool>,
     pub include_thread_info: Option<bool>,
     pub include_source_location: Option<bool>,
-    
+
     // File management
     pub log_file_path: Option<String>,
     pub max_file_size_mb: Option<u64>,
@@ -332,17 +331,17 @@ pub fn get_local_config_dir() -> PathBuf {
 /// Get the project config directory (traverse up to find .git)
 pub fn get_project_config_dir() -> Option<PathBuf> {
     let mut current = std::env::current_dir().ok()?;
-    
+
     loop {
         if current.join(".git").exists() {
             return Some(current);
         }
-        
+
         if !current.pop() {
             break;
         }
     }
-    
+
     None
 }
 
@@ -355,7 +354,9 @@ pub fn get_config_path(scope: ConfigScope) -> Result<PathBuf> {
             if let Some(dir) = get_project_config_dir() {
                 Ok(dir.join(".claude").join("config.json"))
             } else {
-                Err(Error::Config("No project root found (no .git directory)".to_string()))
+                Err(Error::Config(
+                    "No project root found (no .git directory)".to_string(),
+                ))
             }
         }
     }
@@ -364,36 +365,35 @@ pub fn get_config_path(scope: ConfigScope) -> Result<PathBuf> {
 /// Load config from a specific scope
 pub fn load_config(scope: ConfigScope) -> Result<Config> {
     let path = get_config_path(scope)?;
-    
+
     if !path.exists() {
         return Ok(Config::default());
     }
-    
+
     let content = fs::read_to_string(&path)
         .with_context(|| format!("Failed to read config from {}", path.display()))?;
-    
+
     let config: Config = serde_json::from_str(&content)
         .with_context(|| format!("Failed to parse config from {}", path.display()))?;
-    
+
     Ok(config)
 }
 
 /// Save config to a specific scope
 pub fn save_config(scope: ConfigScope, config: &Config) -> Result<()> {
     let path = get_config_path(scope)?;
-    
+
     // Create parent directory if it doesn't exist
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("Failed to create config directory: {}", parent.display()))?;
     }
-    
-    let content = serde_json::to_string_pretty(config)
-        .context("Failed to serialize config")?;
-    
+
+    let content = serde_json::to_string_pretty(config).context("Failed to serialize config")?;
+
     fs::write(&path, content)
         .with_context(|| format!("Failed to write config to {}", path.display()))?;
-    
+
     // Invalidate cache
     let mut cache = CONFIG_CACHE.write();
     match scope {
@@ -401,7 +401,7 @@ pub fn save_config(scope: ConfigScope, config: &Config) -> Result<()> {
         ConfigScope::Local => cache.local = None,
         ConfigScope::Project => cache.project = None,
     }
-    
+
     Ok(())
 }
 
@@ -414,14 +414,14 @@ pub fn get_merged_config() -> Result<Config> {
     } else {
         None
     };
-    
+
     // Merge configs (project overrides local overrides global)
     let mut merged = global;
     merge_config(&mut merged, &local);
     if let Some(proj) = project {
         merge_config(&mut merged, &proj);
     }
-    
+
     Ok(merged)
 }
 
@@ -430,9 +430,9 @@ fn merge_config(target: &mut Config, source: &Config) {
     // Use serde_json to handle the merge
     let mut target_value = serde_json::to_value(&*target).unwrap();
     let source_value = serde_json::to_value(source).unwrap();
-    
+
     merge_json(&mut target_value, &source_value);
-    
+
     *target = serde_json::from_value(target_value).unwrap();
 }
 
@@ -457,38 +457,47 @@ fn merge_json(target: &mut Value, source: &Value) {
 
 /// Get a config value
 pub fn get(key: &str, global: bool) -> Result<Value> {
-    let scope = if global { ConfigScope::User } else { ConfigScope::Local };
+    let scope = if global {
+        ConfigScope::User
+    } else {
+        ConfigScope::Local
+    };
     let config = load_config(scope)?;
     let value = serde_json::to_value(config)?;
-    
+
     let parts: Vec<&str> = key.split('.').collect();
     let mut current = &value;
-    
+
     for part in parts {
         match current.get(part) {
             Some(v) => current = v,
             None => return Ok(Value::Null),
         }
     }
-    
+
     Ok(current.clone())
 }
 
 /// Set a config value
 pub fn set(key: &str, value: &str, global: bool) -> Result<()> {
-    let scope = if global { ConfigScope::User } else { ConfigScope::Local };
+    let scope = if global {
+        ConfigScope::User
+    } else {
+        ConfigScope::Local
+    };
     let mut config = load_config(scope)?;
-    
+
     // Parse value as JSON if possible, otherwise as string
-    let json_value = serde_json::from_str(value).unwrap_or_else(|_| Value::String(value.to_string()));
-    
+    let json_value =
+        serde_json::from_str(value).unwrap_or_else(|_| Value::String(value.to_string()));
+
     // Convert config to JSON value
     let mut config_value = serde_json::to_value(&config)?;
-    
+
     // Navigate to the key and set the value
     let parts: Vec<&str> = key.split('.').collect();
     let mut current = &mut config_value;
-    
+
     for (i, part) in parts.iter().enumerate() {
         if i == parts.len() - 1 {
             // Last part - set the value
@@ -498,30 +507,36 @@ pub fn set(key: &str, value: &str, global: bool) -> Result<()> {
         } else {
             // Navigate deeper
             if let Value::Object(map) = current {
-                let entry = map.entry(part.to_string()).or_insert(Value::Object(serde_json::Map::new()));
+                let entry = map
+                    .entry(part.to_string())
+                    .or_insert(Value::Object(serde_json::Map::new()));
                 current = entry;
             }
         }
     }
-    
+
     // Convert back to config
     config = serde_json::from_value(config_value)?;
     save_config(scope, &config)?;
-    
+
     Ok(())
 }
 
 /// Remove a config value
 pub fn remove(key: &str, global: bool) -> Result<()> {
-    let scope = if global { ConfigScope::User } else { ConfigScope::Local };
+    let scope = if global {
+        ConfigScope::User
+    } else {
+        ConfigScope::Local
+    };
     let mut config = load_config(scope)?;
-    
+
     // Convert config to JSON value
     let mut config_value = serde_json::to_value(&config)?;
-    
+
     // Navigate to the key and remove it
     let parts: Vec<&str> = key.split('.').collect();
-    
+
     if parts.len() == 1 {
         // Top-level key
         if let Value::Object(map) = &mut config_value {
@@ -530,7 +545,7 @@ pub fn remove(key: &str, global: bool) -> Result<()> {
     } else {
         // Nested key
         let mut current = &mut config_value;
-        
+
         for (i, part) in parts.iter().enumerate() {
             if i == parts.len() - 1 {
                 // Last part - remove the key
@@ -549,26 +564,30 @@ pub fn remove(key: &str, global: bool) -> Result<()> {
             }
         }
     }
-    
+
     // Convert back to config
     config = serde_json::from_value(config_value)?;
     save_config(scope, &config)?;
-    
+
     Ok(())
 }
 
 /// Add values to a config array
 pub fn add_to_array(key: &str, values: &[String], global: bool) -> Result<()> {
-    let scope = if global { ConfigScope::User } else { ConfigScope::Local };
+    let scope = if global {
+        ConfigScope::User
+    } else {
+        ConfigScope::Local
+    };
     let mut config = load_config(scope)?;
-    
+
     // Convert config to JSON value
     let mut config_value = serde_json::to_value(&config)?;
-    
+
     // Navigate to the key
     let parts: Vec<&str> = key.split('.').collect();
     let mut current = &mut config_value;
-    
+
     for (i, part) in parts.iter().enumerate() {
         if i == parts.len() - 1 {
             // Last part - add to array
@@ -585,31 +604,37 @@ pub fn add_to_array(key: &str, values: &[String], global: bool) -> Result<()> {
         } else {
             // Navigate deeper
             if let Value::Object(map) = current {
-                let entry = map.entry(part.to_string()).or_insert(Value::Object(serde_json::Map::new()));
+                let entry = map
+                    .entry(part.to_string())
+                    .or_insert(Value::Object(serde_json::Map::new()));
                 current = entry;
             }
         }
     }
-    
+
     // Convert back to config
     config = serde_json::from_value(config_value)?;
     save_config(scope, &config)?;
-    
+
     Ok(())
 }
 
 /// Remove values from a config array
 pub fn remove_from_array(key: &str, values: &[String], global: bool) -> Result<()> {
-    let scope = if global { ConfigScope::User } else { ConfigScope::Local };
+    let scope = if global {
+        ConfigScope::User
+    } else {
+        ConfigScope::Local
+    };
     let mut config = load_config(scope)?;
-    
+
     // Convert config to JSON value
     let mut config_value = serde_json::to_value(&config)?;
-    
+
     // Navigate to the key
     let parts: Vec<&str> = key.split('.').collect();
     let mut current = &mut config_value;
-    
+
     for (i, part) in parts.iter().enumerate() {
         if i == parts.len() - 1 {
             // Last part - remove from array
@@ -629,11 +654,11 @@ pub fn remove_from_array(key: &str, values: &[String], global: bool) -> Result<(
             }
         }
     }
-    
+
     // Convert back to config
     config = serde_json::from_value(config_value)?;
     save_config(scope, &config)?;
-    
+
     Ok(())
 }
 
@@ -647,7 +672,11 @@ pub fn is_array_key(key: &str, global: bool) -> bool {
 
 /// List all config values
 pub fn list(global: bool) -> Result<Value> {
-    let scope = if global { ConfigScope::User } else { ConfigScope::Local };
+    let scope = if global {
+        ConfigScope::User
+    } else {
+        ConfigScope::Local
+    };
     let config = load_config(scope)?;
     Ok(serde_json::to_value(config)?)
 }
@@ -662,20 +691,26 @@ pub fn get_config_value(key: &str, scope: ConfigScope) -> Result<Value> {
         "api_key_helper" => config.api_key_helper.map(Value::String),
         "todo_feature_enabled" => config.todo_feature_enabled.map(Value::Bool),
         "memory_usage_count" => config.memory_usage_count.map(|v| Value::Number(v.into())),
-        "prompt_queue_use_count" => config.prompt_queue_use_count.map(|v| Value::Number(v.into())),
+        "prompt_queue_use_count" => config
+            .prompt_queue_use_count
+            .map(|v| Value::Number(v.into())),
         "has_completed_onboarding" => config.has_completed_onboarding.map(Value::Bool),
-        "mcp_servers" => config.mcp_servers.map(|v| serde_json::to_value(v).unwrap_or(Value::Null)),
-        "logging_config" => config.logging_config.map(|v| serde_json::to_value(v).unwrap_or(Value::Null)),
+        "mcp_servers" => config
+            .mcp_servers
+            .map(|v| serde_json::to_value(v).unwrap_or(Value::Null)),
+        "logging_config" => config
+            .logging_config
+            .map(|v| serde_json::to_value(v).unwrap_or(Value::Null)),
         _ => config.extra.get(key).cloned(),
     };
-    
+
     value.ok_or_else(|| Error::Config(format!("Key '{}' not found", key)))
 }
 
 /// Set a config value
 pub fn set_config_value(key: &str, value: &str, scope: ConfigScope) -> Result<()> {
     let mut config = load_config(scope)?;
-    
+
     // Parse value
     let parsed_value: Value = if let Ok(v) = value.parse::<bool>() {
         Value::Bool(v)
@@ -686,7 +721,7 @@ pub fn set_config_value(key: &str, value: &str, scope: ConfigScope) -> Result<()
     } else {
         Value::String(value.to_string())
     };
-    
+
     match key {
         "theme" => config.theme = parsed_value.as_str().map(String::from),
         "model" => config.model = parsed_value.as_str().map(String::from),
@@ -694,16 +729,18 @@ pub fn set_config_value(key: &str, value: &str, scope: ConfigScope) -> Result<()
         "api_key_helper" => config.api_key_helper = parsed_value.as_str().map(String::from),
         "todo_feature_enabled" => config.todo_feature_enabled = parsed_value.as_bool(),
         "memory_usage_count" => config.memory_usage_count = parsed_value.as_u64().map(|v| v as u32),
-        "prompt_queue_use_count" => config.prompt_queue_use_count = parsed_value.as_u64().map(|v| v as u32),
+        "prompt_queue_use_count" => {
+            config.prompt_queue_use_count = parsed_value.as_u64().map(|v| v as u32)
+        }
         "has_completed_onboarding" => config.has_completed_onboarding = parsed_value.as_bool(),
         "logging_config" => {
             config.logging_config = serde_json::from_value(parsed_value).ok();
-        },
+        }
         _ => {
             config.extra.insert(key.to_string(), parsed_value);
         }
     }
-    
+
     save_config(scope, &config)?;
     Ok(())
 }
@@ -711,7 +748,7 @@ pub fn set_config_value(key: &str, value: &str, scope: ConfigScope) -> Result<()
 /// Remove a config value
 pub fn remove_config_value(key: &str, scope: ConfigScope) -> Result<()> {
     let mut config = load_config(scope)?;
-    
+
     match key {
         "theme" => config.theme = None,
         "model" => config.model = None,
@@ -727,7 +764,7 @@ pub fn remove_config_value(key: &str, scope: ConfigScope) -> Result<()> {
             config.extra.remove(key);
         }
     }
-    
+
     save_config(scope, &config)?;
     Ok(())
 }
@@ -735,7 +772,7 @@ pub fn remove_config_value(key: &str, scope: ConfigScope) -> Result<()> {
 /// Get permission mode from config
 pub fn get_permission_mode() -> Result<PermissionMode> {
     let config = get_merged_config()?;
-    
+
     if let Some(mode) = config.extra.get("permissionMode") {
         if let Some(mode_str) = mode.as_str() {
             match mode_str {
@@ -746,14 +783,14 @@ pub fn get_permission_mode() -> Result<PermissionMode> {
             }
         }
     }
-    
+
     Ok(PermissionMode::Default)
 }
 
 /// Get all MCP servers from all scopes
 pub fn get_all_mcp_servers() -> Result<HashMap<String, McpServerConfig>> {
     let mut servers = HashMap::new();
-    
+
     // Load from all scopes (global -> local -> project)
     for scope in [ConfigScope::User, ConfigScope::Local, ConfigScope::Project] {
         if let Ok(config) = load_config(scope) {
@@ -762,7 +799,7 @@ pub fn get_all_mcp_servers() -> Result<HashMap<String, McpServerConfig>> {
             }
         }
     }
-    
+
     Ok(servers)
 }
 
@@ -826,12 +863,12 @@ pub fn save_settings(source: SettingsSource, settings: &Settings) -> Result<()> 
 
     // Create parent directory if it doesn't exist
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("Failed to create settings directory: {}", parent.display()))?;
+        fs::create_dir_all(parent).with_context(|| {
+            format!("Failed to create settings directory: {}", parent.display())
+        })?;
     }
 
-    let content = serde_json::to_string_pretty(settings)
-        .context("Failed to serialize settings")?;
+    let content = serde_json::to_string_pretty(settings).context("Failed to serialize settings")?;
 
     fs::write(&path, content)
         .with_context(|| format!("Failed to write settings to {}", path.display()))?;
@@ -847,7 +884,11 @@ pub fn add_directory_to_settings(source: SettingsSource, directory: &Path) -> Re
     let dir_str = directory.to_string_lossy().to_string();
 
     // Check if already present
-    if settings.permissions.additional_directories.contains(&dir_str) {
+    if settings
+        .permissions
+        .additional_directories
+        .contains(&dir_str)
+    {
         return Ok(false);
     }
 
@@ -869,7 +910,10 @@ pub fn remove_directory_from_settings(source: SettingsSource, directory: &Path) 
 
     // Find and remove
     let original_len = settings.permissions.additional_directories.len();
-    settings.permissions.additional_directories.retain(|d| d != &dir_str);
+    settings
+        .permissions
+        .additional_directories
+        .retain(|d| d != &dir_str);
 
     if settings.permissions.additional_directories.len() == original_len {
         return Ok(false); // Wasn't present
@@ -886,7 +930,11 @@ pub fn get_all_additional_directories() -> Result<Vec<(String, SettingsSource)>>
     let mut directories = Vec::new();
 
     // Load from each source in order (user -> project -> local)
-    for source in [SettingsSource::User, SettingsSource::Project, SettingsSource::Local] {
+    for source in [
+        SettingsSource::User,
+        SettingsSource::Project,
+        SettingsSource::Local,
+    ] {
         if let Ok(settings) = load_settings(source) {
             for dir in settings.permissions.additional_directories {
                 directories.push((dir, source));
@@ -920,11 +968,11 @@ pub fn get_settings_source_short_name(source: SettingsSource) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_logging_config_default() {
         let config = LoggingConfig::default();
-        
+
         assert_eq!(config.default_level, Some("info".to_string()));
         assert!(config.module_levels.is_some());
         assert_eq!(config.enable_file_logging, Some(false));
@@ -938,11 +986,11 @@ mod tests {
         assert_eq!(config.max_file_size_mb, Some(10));
         assert_eq!(config.enable_rotation, Some(true));
     }
-    
+
     #[test]
     fn test_logging_config_serialization() {
         let config = LoggingConfig::default();
-        
+
         // Test serialization
         let json = serde_json::to_string(&config).expect("Should serialize");
         assert!(json.contains("defaultLevel"));
@@ -950,26 +998,26 @@ mod tests {
         assert!(json.contains("enableFileLogging"));
         assert!(json.contains("enableStderrLogging"));
         assert!(json.contains("formatStyle"));
-        
+
         // Test deserialization
         let parsed: LoggingConfig = serde_json::from_str(&json).expect("Should deserialize");
         assert_eq!(parsed.default_level, config.default_level);
         assert_eq!(parsed.enable_file_logging, config.enable_file_logging);
     }
-    
+
     #[test]
     fn test_config_with_logging_config() {
         let mut config = Config::default();
         config.logging_config = Some(LoggingConfig::default());
-        
+
         // Test serialization
         let json = serde_json::to_string(&config).expect("Should serialize");
         assert!(json.contains("loggingConfig"));
-        
+
         // Test deserialization
         let parsed: Config = serde_json::from_str(&json).expect("Should deserialize");
         assert!(parsed.logging_config.is_some());
-        
+
         let logging_config = parsed.logging_config.unwrap();
         assert_eq!(logging_config.default_level, Some("info".to_string()));
     }

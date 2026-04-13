@@ -1,11 +1,11 @@
 use crate::ai::tools::ToolHandler;
 use crate::error::{Error, Result};
-use tokio_util::sync::CancellationToken;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
+use tokio_util::sync::CancellationToken;
 
 /// Todo item matching JavaScript schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,7 +33,7 @@ impl ToolHandler for TodoWriteTool {
     fn description(&self) -> String {
         "Update the todo list for the current session. To be used proactively and often to track progress and pending tasks.".to_string()
     }
-    
+
     fn input_schema(&self) -> Value {
         // Schema matches JavaScript: content, status, activeForm
         json!({
@@ -66,8 +66,12 @@ impl ToolHandler for TodoWriteTool {
             "required": ["todos"]
         })
     }
-    
-    async fn execute(&self, input: Value, _cancellation_token: Option<CancellationToken>) -> Result<String> {
+
+    async fn execute(
+        &self,
+        input: Value,
+        _cancellation_token: Option<CancellationToken>,
+    ) -> Result<String> {
         // Parse the todos from input
         let todos = input["todos"]
             .as_array()
@@ -89,18 +93,17 @@ impl ToolHandler for TodoWriteTool {
         let todo_file = todos_dir.join(format!("claude-agent-{}.json", agent_id));
 
         // Save the todos to file
-        let json_content = serde_json::to_string_pretty(&todo_list)
-            .map_err(|e| Error::Serialization(e))?;
+        let json_content =
+            serde_json::to_string_pretty(&todo_list).map_err(|e| Error::Serialization(e))?;
 
-        fs::write(&todo_file, json_content)
-            .map_err(|e| Error::Io(e))?;
+        fs::write(&todo_file, json_content).map_err(|e| Error::Io(e))?;
 
         // Format response matching JavaScript output
         let mut response = String::from("Todos have been modified successfully. Ensure that you continue to use the todo list to track your progress. Please proceed with the current tasks if applicable");
 
         Ok(response)
     }
-    
+
     fn action_description(&self, input: &Value) -> String {
         let count = input["todos"]
             .as_array()
@@ -108,7 +111,7 @@ impl ToolHandler for TodoWriteTool {
             .unwrap_or(0);
         format!("Update todo list ({} items)", count)
     }
-    
+
     fn permission_details(&self, _input: &Value) -> String {
         "Update session todo list".to_string()
     }
@@ -133,7 +136,11 @@ impl ToolHandler for TodoReadTool {
         })
     }
 
-    async fn execute(&self, _input: Value, _cancellation_token: Option<CancellationToken>) -> Result<String> {
+    async fn execute(
+        &self,
+        _input: Value,
+        _cancellation_token: Option<CancellationToken>,
+    ) -> Result<String> {
         // Get the todos directory
         let todos_dir = get_todos_dir()?;
 
@@ -143,11 +150,10 @@ impl ToolHandler for TodoReadTool {
 
         // Read the todos from file if it exists
         if todo_file.exists() {
-            let json_content = fs::read_to_string(&todo_file)
-                .map_err(|e| Error::Io(e))?;
+            let json_content = fs::read_to_string(&todo_file).map_err(|e| Error::Io(e))?;
 
-            let todos: Vec<Todo> = serde_json::from_str(&json_content)
-                .unwrap_or_else(|_| Vec::new());
+            let todos: Vec<Todo> =
+                serde_json::from_str(&json_content).unwrap_or_else(|_| Vec::new());
 
             if todos.is_empty() {
                 return Ok("(Todo list is empty)".to_string());
@@ -174,12 +180,7 @@ impl ToolHandler for TodoReadTool {
                     TodoStatus::Pending => "pending",
                 };
 
-                output.push_str(&format!(
-                    "{}. [{}] {}\n",
-                    i + 1,
-                    status_str,
-                    todo.content
-                ));
+                output.push_str(&format!("{}. [{}] {}\n", i + 1, status_str, todo.content));
             }
 
             Ok(output)
@@ -203,23 +204,21 @@ fn get_todos_dir() -> Result<PathBuf> {
     if let Ok(custom_dir) = std::env::var("TODO_DIR") {
         let todos_dir = PathBuf::from(custom_dir);
         if !todos_dir.exists() {
-            fs::create_dir_all(&todos_dir)
-                .map_err(|e| Error::Io(e))?;
+            fs::create_dir_all(&todos_dir).map_err(|e| Error::Io(e))?;
         }
         return Ok(todos_dir);
     }
-    
+
     // Default behavior - use ~/.claude/todos
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .map_err(|_| Error::Config("Cannot determine home directory".to_string()))?;
-    
+
     let todos_dir = PathBuf::from(home).join(".claude").join("todos");
-    
+
     if !todos_dir.exists() {
-        fs::create_dir_all(&todos_dir)
-            .map_err(|e| Error::Io(e))?;
+        fs::create_dir_all(&todos_dir).map_err(|e| Error::Io(e))?;
     }
-    
+
     Ok(todos_dir)
 }

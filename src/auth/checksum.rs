@@ -1,6 +1,6 @@
 use anyhow::Result;
-use sha2::{Sha256, Digest as Sha2Digest};
 use crc32fast::Hasher as Crc32Hasher;
+use sha2::{Digest as Sha2Digest, Sha256};
 
 /// Checksum algorithm types matching JavaScript ChecksumAlgorithm
 #[derive(Debug, Clone)]
@@ -21,37 +21,31 @@ pub struct ChecksumConfig {
 /// Create checksum configuration matching JavaScript createChecksumConfiguration
 pub fn create_checksum_configuration(algorithms: Vec<ChecksumAlgorithm>) -> Vec<ChecksumConfig> {
     let mut configs = Vec::new();
-    
+
     for algo in algorithms {
         let config = match algo {
-            ChecksumAlgorithm::SHA256 => {
-                ChecksumConfig {
-                    algorithm_id: ChecksumAlgorithm::SHA256,
-                    checksum_constructor: Box::new(|data: &[u8]| {
-                        let mut hasher = Sha256::new();
-                        hasher.update(data);
-                        format!("{:x}", hasher.finalize())
-                    }),
-                }
+            ChecksumAlgorithm::SHA256 => ChecksumConfig {
+                algorithm_id: ChecksumAlgorithm::SHA256,
+                checksum_constructor: Box::new(|data: &[u8]| {
+                    let mut hasher = Sha256::new();
+                    hasher.update(data);
+                    format!("{:x}", hasher.finalize())
+                }),
             },
-            ChecksumAlgorithm::MD5 => {
-                ChecksumConfig {
-                    algorithm_id: ChecksumAlgorithm::MD5,
-                    checksum_constructor: Box::new(|data: &[u8]| {
-                        let digest = md5::compute(data);
-                        format!("{:x}", digest)
-                    }),
-                }
+            ChecksumAlgorithm::MD5 => ChecksumConfig {
+                algorithm_id: ChecksumAlgorithm::MD5,
+                checksum_constructor: Box::new(|data: &[u8]| {
+                    let digest = md5::compute(data);
+                    format!("{:x}", digest)
+                }),
             },
-            ChecksumAlgorithm::CRC32 => {
-                ChecksumConfig {
-                    algorithm_id: ChecksumAlgorithm::CRC32,
-                    checksum_constructor: Box::new(|data: &[u8]| {
-                        let mut hasher = Crc32Hasher::new();
-                        hasher.update(data);
-                        format!("{:08x}", hasher.finalize())
-                    }),
-                }
+            ChecksumAlgorithm::CRC32 => ChecksumConfig {
+                algorithm_id: ChecksumAlgorithm::CRC32,
+                checksum_constructor: Box::new(|data: &[u8]| {
+                    let mut hasher = Crc32Hasher::new();
+                    hasher.update(data);
+                    format!("{:08x}", hasher.finalize())
+                }),
             },
             ChecksumAlgorithm::CRC32C => {
                 ChecksumConfig {
@@ -64,22 +58,20 @@ pub fn create_checksum_configuration(algorithms: Vec<ChecksumAlgorithm>) -> Vec<
                         unimplemented!("CRC32C requires crc32c crate to be added to dependencies")
                     }),
                 }
-            },
-            ChecksumAlgorithm::SHA1 => {
-                ChecksumConfig {
-                    algorithm_id: ChecksumAlgorithm::SHA1,
-                    checksum_constructor: Box::new(|data: &[u8]| {
-                        use sha1::{Sha1, Digest};
-                        let mut hasher = Sha1::new();
-                        hasher.update(data);
-                        format!("{:x}", hasher.finalize())
-                    }),
-                }
+            }
+            ChecksumAlgorithm::SHA1 => ChecksumConfig {
+                algorithm_id: ChecksumAlgorithm::SHA1,
+                checksum_constructor: Box::new(|data: &[u8]| {
+                    use sha1::{Digest, Sha1};
+                    let mut hasher = Sha1::new();
+                    hasher.update(data);
+                    format!("{:x}", hasher.finalize())
+                }),
             },
         };
         configs.push(config);
     }
-    
+
     configs
 }
 

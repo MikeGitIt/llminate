@@ -1,21 +1,21 @@
-pub mod storage;
-pub mod signers;
-pub mod checksum;
 pub mod aws;
 pub mod aws_providers;
+pub mod checksum;
 pub mod client;
 pub mod http;
-pub mod session;
 pub mod proxy;
+pub mod session;
+pub mod signers;
+pub mod storage;
 pub mod utils;
 
+use self::storage::{CredentialsStorage, PlaintextStorage, StorageBackend};
 use crate::error::{Error, Result};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tokio::fs;
-use tracing::{debug, info, error};
-use self::storage::{CredentialsStorage, StorageBackend, PlaintextStorage};
+use tracing::{debug, error, info};
 
 /// Authentication methods supported
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,7 +51,10 @@ pub struct AuthConfig {
     pub primary_api_key: Option<String>,
     #[serde(rename = "apiKeyHelper", skip_serializing_if = "Option::is_none")]
     pub api_key_helper: Option<String>,
-    #[serde(rename = "customApiKeyResponses", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "customApiKeyResponses",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub custom_api_key_responses: Option<CustomApiKeyResponses>,
     #[serde(rename = "oauth", skip_serializing_if = "Option::is_none")]
     pub oauth: Option<ClaudeAiOauth>,
@@ -86,7 +89,7 @@ impl AuthManager {
     pub fn new() -> Result<Self> {
         let config_path = Self::get_config_file_path()?;
         let storage_backend = storage::get_storage_backend()?;
-        
+
         Ok(Self {
             config_path,
             config_cache: None,
@@ -94,14 +97,14 @@ impl AuthManager {
             credentials_cache: None,
         })
     }
-    
+
     /// Create a new authentication manager with custom config directory (for testing)
     pub fn new_with_config_dir(config_dir: PathBuf) -> Result<Self> {
         let config_path = config_dir.join("config.json");
         let storage_backend = Box::new(storage::PlaintextStorage::new_with_path(
-            config_dir.join(".credentials.json")
+            config_dir.join(".credentials.json"),
         ));
-        
+
         Ok(Self {
             config_path,
             config_cache: None,
@@ -115,19 +118,21 @@ impl AuthManager {
         // Priority 1: Check for .config.json in config directory
         let config_dir = Self::get_config_directory()?;
         let primary_config = config_dir.join(".config.json");
-        
+
         if primary_config.exists() {
             debug!("Using primary config file: {:?}", primary_config);
             return Ok(primary_config);
         }
-        
+
         // Priority 2: Fallback to .claude.json in appropriate location
         if let Ok(claude_config_dir) = std::env::var("CLAUDE_CONFIG_DIR") {
             Ok(PathBuf::from(claude_config_dir).join(".claude.json"))
         } else if let Some(home_dir) = dirs::home_dir() {
             Ok(home_dir.join(".claude.json"))
         } else {
-            Err(Error::Config("Cannot determine home directory for config file".to_string()))
+            Err(Error::Config(
+                "Cannot determine home directory for config file".to_string(),
+            ))
         }
     }
 
@@ -136,16 +141,18 @@ impl AuthManager {
         if let Ok(claude_config_dir) = std::env::var("CLAUDE_CONFIG_DIR") {
             return Ok(PathBuf::from(claude_config_dir));
         }
-        
+
         if let Ok(xdg_config_home) = std::env::var("XDG_CONFIG_HOME") {
             return Ok(PathBuf::from(xdg_config_home).join("claude"));
         }
-        
+
         if let Some(home_dir) = dirs::home_dir() {
             return Ok(home_dir.join(".claude"));
         }
-        
-        Err(Error::Config("Cannot determine config directory".to_string()))
+
+        Err(Error::Config(
+            "Cannot determine config directory".to_string(),
+        ))
     }
 
     /// Read and cache configuration file (JavaScript helperFunc5 equivalent)
@@ -163,7 +170,7 @@ impl AuthManager {
         }
 
         debug!("Reading config file: {:?}", self.config_path);
-        
+
         if !self.config_path.exists() {
             debug!("Config file does not exist, using defaults");
             let default_config = AuthConfig {
@@ -174,25 +181,28 @@ impl AuthManager {
             };
             return Ok(default_config);
         }
-        
-        let content = fs::read_to_string(&self.config_path).await
+
+        let content = fs::read_to_string(&self.config_path)
+            .await
             .context("Failed to read config file")?;
-            
-        let config: AuthConfig = serde_json::from_str(&content)
-            .context("Failed to parse config file")?;
-            
+
+        let config: AuthConfig =
+            serde_json::from_str(&content).context("Failed to parse config file")?;
+
         // Update cache
         if let Ok(metadata) = fs::metadata(&self.config_path).await {
             if let Ok(modified) = metadata.modified() {
                 self.config_cache = Some((config.clone(), modified));
             }
         }
-        
-        debug!("Loaded config: has_primary_api_key={}, has_api_key_helper={}, has_oauth={}", 
-               config.primary_api_key.is_some(),
-               config.api_key_helper.is_some(),
-               config.oauth.is_some());
-        
+
+        debug!(
+            "Loaded config: has_primary_api_key={}, has_api_key_helper={}, has_oauth={}",
+            config.primary_api_key.is_some(),
+            config.api_key_helper.is_some(),
+            config.oauth.is_some()
+        );
+
         Ok(config)
     }
 
@@ -200,7 +210,11 @@ impl AuthManager {
     async fn get_credentials(&mut self) -> Result<Option<storage::Credentials>> {
         // Check cache (1 minute TTL)
         if let Some((ref creds, cached_time)) = self.credentials_cache {
-            if cached_time.elapsed().unwrap_or(std::time::Duration::from_secs(3600)) < std::time::Duration::from_secs(60) {
+            if cached_time
+                .elapsed()
+                .unwrap_or(std::time::Duration::from_secs(3600))
+                < std::time::Duration::from_secs(60)
+            {
                 debug!("Using cached credentials");
                 return Ok(creds.clone());
             }
@@ -208,7 +222,7 @@ impl AuthManager {
 
         debug!("Reading credentials from storage backend");
         let credentials = self.storage_backend.read().await?;
-        
+
         self.credentials_cache = Some((credentials.clone(), std::time::SystemTime::now()));
         Ok(credentials)
     }
@@ -225,12 +239,12 @@ impl AuthManager {
                         Ok(None) => {
                             // Refresh returned None (no refresh token or other issue)
                             error!("OAuth token expired and refresh failed (no refresh token)");
-                            return Ok(None);  // Don't return expired token
+                            return Ok(None); // Don't return expired token
                         }
                         Err(e) => {
                             // Refresh failed with error
                             error!("OAuth token expired and refresh failed: {}", e);
-                            return Ok(None);  // Don't return expired token
+                            return Ok(None); // Don't return expired token
                         }
                     }
                 }
@@ -280,7 +294,7 @@ impl AuthManager {
     /// Get stored OAuth token (matches JavaScript getOAuthToken function)
     pub async fn get_oauth_token(&mut self) -> Result<Option<ClaudeAiOauth>> {
         debug!("Retrieving stored OAuth token");
-        
+
         // Check environment variable first (CLAUDE_CODE_OAUTH_TOKEN)
         if let Ok(oauth_token_str) = std::env::var("CLAUDE_CODE_OAUTH_TOKEN") {
             if !oauth_token_str.is_empty() {
@@ -300,21 +314,21 @@ impl AuthManager {
                 }));
             }
         }
-        
+
         // Check stored credentials
         self.get_claude_ai_oauth().await
     }
-    
+
     /// Check if OAuth token has required scopes (matches JavaScript hasValidScopes function)
     pub fn has_valid_scopes(token: &Option<ClaudeAiOauth>) -> bool {
         const REQUIRED_SCOPE: &str = "user:inference";
-        
+
         if let Some(oauth) = token {
             return oauth.scopes.contains(&REQUIRED_SCOPE.to_string());
         }
         false
     }
-    
+
     /// Check if OAuth is available and valid (matches JavaScript hasOAuthAccess function)
     pub async fn has_oauth_access(&mut self) -> bool {
         // Get OAuth token if available
@@ -326,7 +340,10 @@ impl AuthManager {
     }
 
     /// Refresh OAuth token using refresh token
-    async fn refresh_oauth_token(&mut self, oauth: &ClaudeAiOauth) -> Result<Option<ClaudeAiOauth>> {
+    async fn refresh_oauth_token(
+        &mut self,
+        oauth: &ClaudeAiOauth,
+    ) -> Result<Option<ClaudeAiOauth>> {
         if oauth.refresh_token.is_empty() {
             debug!("No refresh token available");
             return Ok(None);
@@ -355,25 +372,32 @@ impl AuthManager {
             return Ok(None);
         }
 
-        let token_response: serde_json::Value = response.json().await
+        let token_response: serde_json::Value = response
+            .json()
+            .await
             .context("Failed to parse refresh response")?;
 
         let new_oauth = ClaudeAiOauth {
             access_token: token_response["access_token"]
                 .as_str()
-                .ok_or_else(|| Error::Authentication("No access_token in refresh response".to_string()))?
+                .ok_or_else(|| {
+                    Error::Authentication("No access_token in refresh response".to_string())
+                })?
                 .to_string(),
-            refresh_token: token_response.get("refresh_token")
+            refresh_token: token_response
+                .get("refresh_token")
                 .and_then(|v| v.as_str())
                 .unwrap_or(&oauth.refresh_token)
                 .to_string(),
-            expires_at: token_response.get("expires_in")
+            expires_at: token_response
+                .get("expires_in")
                 .and_then(|v| v.as_i64())
                 .map(|expires_in| {
                     std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
-                        .as_secs() as i64 + expires_in
+                        .as_secs() as i64
+                        + expires_in
                 }),
             scopes: oauth.scopes.clone(),
             subscription_type: oauth.subscription_type.clone(),
@@ -395,7 +419,7 @@ impl AuthManager {
     /// Exchange OAuth token for API key (JavaScript function at line 355319)
     async fn exchange_oauth_for_api_key(&self, oauth_token: &str) -> Result<String> {
         debug!("Exchanging OAuth token for API key");
-        
+
         let client = reqwest::Client::new();
         let response = client
             .post("https://api.anthropic.com/api/oauth/claude_cli/create_api_key")
@@ -405,31 +429,44 @@ impl AuthManager {
             .send()
             .await
             .context("Failed to exchange OAuth token for API key")?;
-        
+
         if !response.status().is_success() {
             let status = response.status();
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-            error!("API key exchange failed with status {}: {}", status, error_text);
-            return Err(Error::Auth(format!("Failed to exchange OAuth token: {} - {}", status, error_text)));
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            error!(
+                "API key exchange failed with status {}: {}",
+                status, error_text
+            );
+            return Err(Error::Auth(format!(
+                "Failed to exchange OAuth token: {} - {}",
+                status, error_text
+            )));
         }
-        
-        let response_data: serde_json::Value = response.json().await
+
+        let response_data: serde_json::Value = response
+            .json()
+            .await
             .context("Failed to parse API key exchange response")?;
-        
+
         // Extract the raw_key from response
         if let Some(raw_key) = response_data.get("raw_key").and_then(|v| v.as_str()) {
             info!("Successfully exchanged OAuth token for API key");
             Ok(raw_key.to_string())
         } else {
             error!("API key exchange response missing raw_key field");
-            Err(Error::Auth("API key exchange response missing raw_key".to_string()))
+            Err(Error::Auth(
+                "API key exchange response missing raw_key".to_string(),
+            ))
         }
     }
 
     /// Execute apiKeyHelper command (JavaScript MS function)
     async fn execute_api_key_helper(&mut self, helper_command: &str) -> Result<Option<String>> {
         debug!("Executing apiKeyHelper: {}", helper_command);
-        
+
         match tokio::process::Command::new("sh")
             .arg("-c")
             .arg(helper_command)
@@ -457,7 +494,10 @@ impl AuthManager {
                         }
                     }
                 } else {
-                    debug!("apiKeyHelper execution failed with status: {}", output.status);
+                    debug!(
+                        "apiKeyHelper execution failed with status: {}",
+                        output.status
+                    );
                     // JavaScript MS() returns " " (space) on failure
                     Ok(Some(" ".to_string()))
                 }
@@ -473,20 +513,23 @@ impl AuthManager {
     /// Check if API key is approved by user (JavaScript YA function)
     async fn is_api_key_approved(&mut self, api_key: &str) -> Result<bool> {
         let config = self.get_config().await?;
-        
+
         if let Some(responses) = config.custom_api_key_responses {
             // Check last 20 characters of API key (JavaScript VJ function)
-            let suffix = if api_key.len() > 20 { 
-                &api_key[api_key.len() - 20..] 
-            } else { 
-                api_key 
+            let suffix = if api_key.len() > 20 {
+                &api_key[api_key.len() - 20..]
+            } else {
+                api_key
             };
-            
+
             let is_approved = responses.approved.contains(&suffix.to_string());
-            debug!("API key approval check: suffix={}, approved={}", suffix, is_approved);
+            debug!(
+                "API key approval check: suffix={}, approved={}",
+                suffix, is_approved
+            );
             return Ok(is_approved);
         }
-        
+
         debug!("No customApiKeyResponses found, considering not approved");
         Ok(false)
     }
@@ -494,7 +537,7 @@ impl AuthManager {
     /// Get authentication source with priority (JavaScript QX function)
     async fn get_auth_source(&mut self) -> Result<AuthSource> {
         debug!("Determining authentication source");
-        
+
         // Priority 1: ANTHROPIC_AUTH_TOKEN environment variable
         if let Ok(auth_token) = std::env::var("ANTHROPIC_AUTH_TOKEN") {
             if !auth_token.is_empty() {
@@ -542,7 +585,8 @@ impl AuthManager {
         let config = self.get_config().await?;
         if let Some(helper_command) = config.api_key_helper {
             if let Some(api_key) = self.execute_api_key_helper(&helper_command).await? {
-                if api_key != " " {  // Space is the error sentinel
+                if api_key != " " {
+                    // Space is the error sentinel
                     debug!("Using apiKeyHelper");
                     return Ok(AuthSource {
                         key: Some(api_key),
@@ -557,13 +601,15 @@ impl AuthManager {
             // Try keychain for API key (not OAuth)
             let service_name = storage::get_service_name_for_api_key()?;
             let username = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-            
+
             if let Ok(output) = tokio::process::Command::new("security")
                 .args(&[
                     "find-generic-password",
-                    "-a", &username,
+                    "-a",
+                    &username,
                     "-w",
-                    "-s", &service_name
+                    "-s",
+                    &service_name,
                 ])
                 .output()
                 .await
@@ -585,14 +631,10 @@ impl AuthManager {
             // Linux: Try secret-tool for GNOME Keyring/KWallet
             let service_name = storage::get_service_name_for_api_key()?;
             let username = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-            
+
             // Try secret-tool (GNOME Keyring)
             if let Ok(output) = tokio::process::Command::new("secret-tool")
-                .args(&[
-                    "lookup",
-                    "service", &service_name,
-                    "username", &username
-                ])
+                .args(&["lookup", "service", &service_name, "username", &username])
                 .output()
                 .await
             {
@@ -609,14 +651,15 @@ impl AuthManager {
                     }
                 }
             }
-            
+
             // Try kwallet (KDE Wallet)
             if let Ok(output) = tokio::process::Command::new("kwallet-query")
                 .args(&[
                     "--read-password",
                     &service_name,
-                    "--folder", "Claude Code",
-                    "kdewallet"
+                    "--folder",
+                    "Claude Code",
+                    "kdewallet",
                 ])
                 .output()
                 .await
@@ -637,20 +680,16 @@ impl AuthManager {
         } else if cfg!(target_os = "windows") {
             // Windows: Use Windows Credential Manager via PowerShell
             let service_name = storage::get_service_name_for_api_key()?;
-            
+
             // PowerShell command to retrieve credential
             let ps_script = format!(
                 "$cred = Get-StoredCredential -Target '{}' -AsCredentialObject -ErrorAction SilentlyContinue; \
                  if ($cred) {{ $cred.GetNetworkCredential().Password }}",
                 service_name
             );
-            
+
             if let Ok(output) = tokio::process::Command::new("powershell")
-                .args(&[
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-Command", &ps_script
-                ])
+                .args(&["-NoProfile", "-NonInteractive", "-Command", &ps_script])
                 .output()
                 .await
             {
@@ -690,10 +729,11 @@ impl AuthManager {
     /// Check if OAuth should be preferred over API key
     async fn should_prefer_oauth(&mut self) -> Result<bool> {
         debug!("Checking if OAuth should be preferred");
-        
+
         // Check environment OAuth tokens first
-        if std::env::var("ANTHROPIC_AUTH_TOKEN").is_ok() || 
-           std::env::var("CLAUDE_CODE_OAUTH_TOKEN").is_ok() {
+        if std::env::var("ANTHROPIC_AUTH_TOKEN").is_ok()
+            || std::env::var("CLAUDE_CODE_OAUTH_TOKEN").is_ok()
+        {
             debug!("Environment OAuth token found - OAuth preferred");
             return Ok(true);
         }
@@ -704,7 +744,9 @@ impl AuthManager {
             if !api_key.is_empty() {
                 // Detect OAuth token accidentally stored as API key
                 if api_key.starts_with("sk-ant-oat") {
-                    debug!("ANTHROPIC_API_KEY contains OAuth token - clearing and preferring OAuth");
+                    debug!(
+                        "ANTHROPIC_API_KEY contains OAuth token - clearing and preferring OAuth"
+                    );
                     // Clear the misplaced OAuth token from API key env var
                     std::env::remove_var("ANTHROPIC_API_KEY");
                     return Ok(true);
@@ -718,13 +760,14 @@ impl AuthManager {
 
         // Check if OAuth credentials are available
         if let Some(oauth) = self.get_claude_ai_oauth().await? {
-            if !oauth.access_token.is_empty() && 
-               oauth.scopes.contains(&"user:inference".to_string()) {
+            if !oauth.access_token.is_empty()
+                && oauth.scopes.contains(&"user:inference".to_string())
+            {
                 debug!("Valid OAuth credentials found - OAuth preferred");
                 return Ok(true);
             }
         }
-        
+
         debug!("No OAuth credentials or unapproved API key - OAuth not preferred");
         Ok(false)
     }
@@ -783,7 +826,9 @@ impl AuthManager {
             // Filter out space character sentinel value from apiKeyHelper
             if api_key == " " {
                 error!("apiKeyHelper failed, no valid API key");
-                return Err(Error::Authentication("apiKeyHelper failed to provide valid key".to_string()));
+                return Err(Error::Authentication(
+                    "apiKeyHelper failed to provide valid key".to_string(),
+                ));
             }
 
             info!("✅ Using API key from source: {}", auth_source.source);
@@ -825,8 +870,9 @@ impl AuthManager {
         debug!("Checking Claude Desktop availability");
 
         // Check environment variables
-        if std::env::var("ANTHROPIC_AUTH_TOKEN").is_ok() ||
-           std::env::var("CLAUDE_CODE_OAUTH_TOKEN").is_ok() {
+        if std::env::var("ANTHROPIC_AUTH_TOKEN").is_ok()
+            || std::env::var("CLAUDE_CODE_OAUTH_TOKEN").is_ok()
+        {
             debug!("✅ Found OAuth environment variable - Claude Desktop available");
             return true;
         }
@@ -895,7 +941,11 @@ impl AuthManager {
         #[cfg(target_os = "linux")]
         {
             // Check common Linux installation locations
-            for path in &["/usr/bin/claude", "/usr/local/bin/claude", "/opt/Claude/claude"] {
+            for path in &[
+                "/usr/bin/claude",
+                "/usr/local/bin/claude",
+                "/opt/Claude/claude",
+            ] {
                 if std::path::Path::new(path).exists() {
                     debug!("Found Claude Desktop at: {}", path);
                     return true;
@@ -938,24 +988,25 @@ impl AuthManager {
     /// Prompt user for Claude Desktop authentication setup
     pub async fn prompt_desktop_auth(&mut self) -> Result<()> {
         debug!("Setting up Claude Desktop authentication");
-        
+
         // Try to read existing Claude Desktop OAuth tokens
         if let Some(oauth) = self.get_claude_ai_oauth().await? {
             debug!("Found existing Claude Desktop OAuth tokens");
-            
+
             // Validate scopes
             if !oauth.scopes.contains(&"user:inference".to_string()) {
                 return Err(Error::Authentication(
                     "Claude Desktop OAuth tokens missing required 'user:inference' scope. Please re-authenticate in Claude Desktop.".to_string()
                 ));
             }
-            
+
             info!("✅ Successfully configured Claude Desktop authentication");
             return Ok(());
         }
-        
+
         Err(Error::Authentication(
-            "No Claude Desktop OAuth tokens found. Please sign in to Claude Desktop first.".to_string()
+            "No Claude Desktop OAuth tokens found. Please sign in to Claude Desktop first."
+                .to_string(),
         ))
     }
 
@@ -969,55 +1020,61 @@ impl AuthManager {
     /// Save API key from OAuth login to keychain or config file
     pub async fn save_api_key_from_oauth(&mut self, api_key: &str) -> Result<()> {
         debug!("Saving API key from OAuth login");
-        
+
         // On macOS, save to keychain
         if cfg!(target_os = "macos") {
             let service_name = storage::get_service_name_for_api_key()?;
             let username = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-            
+
             // Delete existing entry first
             let _ = tokio::process::Command::new("security")
                 .args(&[
                     "delete-generic-password",
-                    "-a", &username,
-                    "-s", &service_name
+                    "-a",
+                    &username,
+                    "-s",
+                    &service_name,
                 ])
                 .output()
                 .await;
-            
+
             // Add new entry
             let output = tokio::process::Command::new("security")
                 .args(&[
                     "add-generic-password",
-                    "-a", &username,
-                    "-s", &service_name,
-                    "-w", api_key,
-                    "-U"  // Update if exists
+                    "-a",
+                    &username,
+                    "-s",
+                    &service_name,
+                    "-w",
+                    api_key,
+                    "-U", // Update if exists
                 ])
                 .output()
                 .await
                 .map_err(|e| Error::Config(format!("Failed to save to keychain: {}", e)))?;
-            
+
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 return Err(Error::Config(format!("Keychain save failed: {}", stderr)));
             }
-            
+
             debug!("Saved API key to keychain");
         } else {
             // Save to config file
             let mut config = self.get_config().await?;
             config.primary_api_key = Some(api_key.to_string());
-            
+
             let json = serde_json::to_string_pretty(&config)
                 .map_err(|e| Error::Config(format!("Failed to serialize config: {}", e)))?;
-            
-            fs::write(&self.config_path, json).await
+
+            fs::write(&self.config_path, json)
+                .await
                 .map_err(|e| Error::Config(format!("Failed to write config: {}", e)))?;
-            
+
             debug!("Saved API key to config file");
         }
-        
+
         // Clear cache to force reload
         self.config_cache = None;
         Ok(())
@@ -1049,9 +1106,18 @@ impl AuthManager {
         if cfg!(target_os = "macos") {
             if let Ok(service_name) = storage::get_service_name_for_api_key() {
                 let username = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-                debug!("Clearing stale API key from keychain service: {}", service_name);
+                debug!(
+                    "Clearing stale API key from keychain service: {}",
+                    service_name
+                );
                 let _ = tokio::process::Command::new("security")
-                    .args(&["delete-generic-password", "-a", &username, "-s", &service_name])
+                    .args(&[
+                        "delete-generic-password",
+                        "-a",
+                        &username,
+                        "-s",
+                        &service_name,
+                    ])
                     .output()
                     .await;
             }
@@ -1063,7 +1129,8 @@ impl AuthManager {
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
-                .as_secs() as i64 + exp
+                .as_secs() as i64
+                + exp
         });
 
         // Create OAuth token data matching JavaScript structure
@@ -1088,7 +1155,10 @@ impl AuthManager {
 
         // Save to storage backend (matches JavaScript exactly)
         self.storage_backend.update(credentials).await?;
-        info!("Saved OAuth token to storage backend with accountUuid: {:?}", account_uuid);
+        info!(
+            "Saved OAuth token to storage backend with accountUuid: {:?}",
+            account_uuid
+        );
 
         // Clear caches to force reload
         self.config_cache = None;
@@ -1115,8 +1185,10 @@ impl AuthManager {
             let _ = tokio::process::Command::new("security")
                 .args(&[
                     "delete-generic-password",
-                    "-a", &username,
-                    "-s", &service_name
+                    "-a",
+                    &username,
+                    "-s",
+                    &service_name,
                 ])
                 .output()
                 .await;
@@ -1133,7 +1205,8 @@ impl AuthManager {
             let json = serde_json::to_string_pretty(&config)
                 .map_err(|e| Error::Config(format!("Failed to serialize config: {}", e)))?;
 
-            fs::write(&self.config_path, json).await
+            fs::write(&self.config_path, json)
+                .await
                 .map_err(|e| Error::Config(format!("Failed to write config: {}", e)))?;
 
             debug!("Cleared OAuth and API key from config file");
@@ -1162,7 +1235,7 @@ pub async fn get_or_prompt_auth() -> Result<AuthMethod> {
 /// Load AI configuration with authentication method
 pub fn load_config_with_auth(auth_method: AuthMethod) -> Result<crate::ai::AIConfig> {
     let mut config = crate::ai::AIConfig::default();
-    
+
     match auth_method {
         AuthMethod::ApiKey(api_key) => {
             config.api_key = api_key;
@@ -1175,15 +1248,15 @@ pub fn load_config_with_auth(auth_method: AuthMethod) -> Result<crate::ai::AICon
             config.base_url = "https://api.anthropic.com/v1".to_string(); // OAuth uses same endpoint as API keys
         }
     }
-    
+
     // Load other settings from environment if available
     if let Ok(base_url) = std::env::var("ANTHROPIC_BASE_URL") {
         config.base_url = base_url;
     }
-    
+
     if let Ok(model) = std::env::var("ANTHROPIC_MODEL") {
         config.default_model = model;
     }
-    
+
     Ok(config)
 }

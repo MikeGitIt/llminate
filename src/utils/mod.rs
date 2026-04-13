@@ -9,15 +9,13 @@ use std::path::{Path, PathBuf};
 /// Ensure all config directories exist
 pub fn ensure_config_dirs() -> Result<()> {
     let global_dir = crate::config::get_global_config_dir();
-    fs::create_dir_all(&global_dir)
-        .map_err(|e| Error::Io(e))?;
-    
+    fs::create_dir_all(&global_dir).map_err(|e| Error::Io(e))?;
+
     let local_dir = crate::config::get_local_config_dir().join(".claude");
     if !local_dir.exists() {
-        fs::create_dir_all(&local_dir)
-            .map_err(|e| Error::Io(e))?;
+        fs::create_dir_all(&local_dir).map_err(|e| Error::Io(e))?;
     }
-    
+
     Ok(())
 }
 
@@ -46,26 +44,22 @@ pub fn get_cwd() -> Result<PathBuf> {
 
 /// Create a directory with all parent directories
 pub fn create_dir_all(path: impl AsRef<Path>) -> Result<()> {
-    fs::create_dir_all(path.as_ref())
-        .map_err(|e| Error::Io(e))
+    fs::create_dir_all(path.as_ref()).map_err(|e| Error::Io(e))
 }
 
 /// Read a file to string
 pub fn read_file(path: impl AsRef<Path>) -> Result<String> {
-    fs::read_to_string(path.as_ref())
-        .map_err(|e| Error::Io(e))
+    fs::read_to_string(path.as_ref()).map_err(|e| Error::Io(e))
 }
 
 /// Write string to file
 pub fn write_file(path: impl AsRef<Path>, contents: &str) -> Result<()> {
-    fs::write(path.as_ref(), contents)
-        .map_err(|e| Error::Io(e))
+    fs::write(path.as_ref(), contents).map_err(|e| Error::Io(e))
 }
 
 /// Get home directory
 pub fn get_home_dir() -> Result<PathBuf> {
-    dirs::home_dir()
-        .ok_or_else(|| Error::Config("Could not determine home directory".to_string()))
+    dirs::home_dir().ok_or_else(|| Error::Config("Could not determine home directory".to_string()))
 }
 
 /// Format bytes as human readable
@@ -73,12 +67,12 @@ pub fn format_bytes(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
     let mut size = bytes as f64;
     let mut unit_index = 0;
-    
+
     while size >= 1024.0 && unit_index < UNITS.len() - 1 {
         size /= 1024.0;
         unit_index += 1;
     }
-    
+
     if unit_index == 0 {
         format!("{} {}", size as u64, UNITS[unit_index])
     } else {

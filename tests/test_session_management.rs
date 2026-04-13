@@ -1,8 +1,8 @@
 use llminate::auth::session::{
-    Session, SessionData, SessionManager, SessionStatus, SessionUpdate, SessionUser,
-    SessionAggregatesManager, capture_session, capture_session_client, close_session,
-    create_session_envelope, end_session_internal, make_session,
-    send_session_update, serialize_session, start_session, update_session,
+    capture_session, capture_session_client, close_session, create_session_envelope,
+    end_session_internal, make_session, send_session_update, serialize_session, start_session,
+    update_session, Session, SessionAggregatesManager, SessionData, SessionManager, SessionStatus,
+    SessionUpdate, SessionUser,
 };
 use serde_json;
 use std::sync::Arc;
@@ -38,10 +38,13 @@ fn test_full_session_lifecycle() {
     assert_eq!(session.ip_address, Some("192.168.1.1".to_string()));
 
     // Update session with errors
-    update_session(&mut session, SessionUpdate {
-        errors: Some(3),
-        ..Default::default()
-    });
+    update_session(
+        &mut session,
+        SessionUpdate {
+            errors: Some(3),
+            ..Default::default()
+        },
+    );
     assert_eq!(session.errors, 3);
 
     // Close session normally
@@ -134,7 +137,10 @@ fn test_session_validation() {
     let session_no_release = make_session(None);
     let result = capture_session_client(&session_no_release);
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("missing or non-string release"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("missing or non-string release"));
 
     // Session with release should pass validation
     let session_with_release = make_session(Some(SessionData {
@@ -167,7 +173,10 @@ fn test_session_envelope_creation() {
     assert!(envelope.sent_at.len() > 0);
     assert_eq!(envelope.session.sid, session.sid);
     assert_eq!(envelope.session.attrs.release, Some("3.0.0".to_string()));
-    assert_eq!(envelope.session.attrs.environment, Some("production".to_string()));
+    assert_eq!(
+        envelope.session.attrs.environment,
+        Some("production".to_string())
+    );
 
     // Verify it serializes to valid JSON
     let json = serde_json::to_string(&envelope).unwrap();
@@ -185,10 +194,13 @@ fn test_session_duration_calculation() {
 
     // Update without explicit duration
     let timestamp = session.timestamp + 30.0; // 30 seconds later
-    update_session(&mut session, SessionUpdate {
-        timestamp: Some(timestamp),
-        ..Default::default()
-    });
+    update_session(
+        &mut session,
+        SessionUpdate {
+            timestamp: Some(timestamp),
+            ..Default::default()
+        },
+    );
 
     // Duration should be calculated
     assert!(session.duration.is_some());
@@ -199,10 +211,13 @@ fn test_session_duration_calculation() {
     // Test with ignore_duration flag
     session.ignore_duration = true;
     let timestamp = session.timestamp + 10.0;
-    update_session(&mut session, SessionUpdate {
-        timestamp: Some(timestamp),
-        ..Default::default()
-    });
+    update_session(
+        &mut session,
+        SessionUpdate {
+            timestamp: Some(timestamp),
+            ..Default::default()
+        },
+    );
     assert!(session.duration.is_none());
 }
 
@@ -241,13 +256,19 @@ fn test_session_user_fallback() {
 fn test_abnormal_session_mechanism() {
     let mut session = make_session(None);
 
-    update_session(&mut session, SessionUpdate {
-        abnormal_mechanism: Some("anr_foreground".to_string()),
-        status: Some(SessionStatus::Abnormal),
-        ..Default::default()
-    });
+    update_session(
+        &mut session,
+        SessionUpdate {
+            abnormal_mechanism: Some("anr_foreground".to_string()),
+            status: Some(SessionStatus::Abnormal),
+            ..Default::default()
+        },
+    );
 
-    assert_eq!(session.abnormal_mechanism, Some("anr_foreground".to_string()));
+    assert_eq!(
+        session.abnormal_mechanism,
+        Some("anr_foreground".to_string())
+    );
     assert_eq!(session.status, SessionStatus::Abnormal);
 }
 
@@ -258,17 +279,23 @@ fn test_session_sid_update() {
 
     // Update with valid 32-char SID
     let new_sid = "12345678901234567890123456789012".to_string();
-    update_session(&mut session, SessionUpdate {
-        sid: Some(new_sid.clone()),
-        ..Default::default()
-    });
+    update_session(
+        &mut session,
+        SessionUpdate {
+            sid: Some(new_sid.clone()),
+            ..Default::default()
+        },
+    );
     assert_eq!(session.sid, new_sid);
 
     // Update with invalid SID (not 32 chars) - should generate new UUID
-    update_session(&mut session, SessionUpdate {
-        sid: Some("short".to_string()),
-        ..Default::default()
-    });
+    update_session(
+        &mut session,
+        SessionUpdate {
+            sid: Some("short".to_string()),
+            ..Default::default()
+        },
+    );
     assert_ne!(session.sid, "short");
     assert_eq!(session.sid.len(), 36); // UUID format
     assert_ne!(session.sid, original_sid);
@@ -340,9 +367,11 @@ fn test_session_listener_notifications() {
     let notified_clone = notified.clone();
 
     // Add listener
-    manager.add_listener(move || {
-        *notified_clone.lock().unwrap() = true;
-    }).unwrap();
+    manager
+        .add_listener(move || {
+            *notified_clone.lock().unwrap() = true;
+        })
+        .unwrap();
 
     // Setting session should trigger listener
     let session = make_session(None);

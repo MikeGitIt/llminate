@@ -482,26 +482,30 @@ pub fn load_installed_plugins() -> Result<InstalledPluginsV2> {
     let version = data.get("version").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
 
     if version == 2 {
-        let plugins: InstalledPluginsV2 = serde_json::from_value(data)
-            .context("Failed to deserialize V2 installed plugins")?;
+        let plugins: InstalledPluginsV2 =
+            serde_json::from_value(data).context("Failed to deserialize V2 installed plugins")?;
         return Ok(plugins);
     }
 
     // V1 format - convert to V2
     // V1 format: { plugins: { [id]: { source, ... } } }
-    let v1_plugins = data.get("plugins").cloned().unwrap_or(Value::Object(serde_json::Map::new()));
+    let v1_plugins = data
+        .get("plugins")
+        .cloned()
+        .unwrap_or(Value::Object(serde_json::Map::new()));
 
     let plugins: HashMap<String, InstalledPluginInfo> = if let Value::Object(map) = v1_plugins {
         map.into_iter()
-            .filter_map(|(k, v)| {
-                serde_json::from_value(v).ok().map(|info| (k, info))
-            })
+            .filter_map(|(k, v)| serde_json::from_value(v).ok().map(|info| (k, info)))
             .collect()
     } else {
         HashMap::new()
     };
 
-    Ok(InstalledPluginsV2 { version: 2, plugins })
+    Ok(InstalledPluginsV2 {
+        version: 2,
+        plugins,
+    })
 }
 
 /// Save installed plugins to disk
@@ -514,8 +518,8 @@ pub fn save_installed_plugins(plugins: &InstalledPluginsV2) -> Result<()> {
             .with_context(|| format!("Failed to create plugins directory: {}", parent.display()))?;
     }
 
-    let content = serde_json::to_string_pretty(plugins)
-        .context("Failed to serialize installed plugins")?;
+    let content =
+        serde_json::to_string_pretty(plugins).context("Failed to serialize installed plugins")?;
 
     fs::write(&path, content)
         .with_context(|| format!("Failed to write installed plugins to {}", path.display()))?;
@@ -575,7 +579,11 @@ pub fn get_enabled_plugins(source: SettingsSource) -> Result<HashMap<String, Val
 /// Check if a plugin is enabled
 pub fn is_plugin_enabled(plugin_id: &str) -> Result<bool> {
     // Check all settings sources
-    for source in [SettingsSource::User, SettingsSource::Project, SettingsSource::Local] {
+    for source in [
+        SettingsSource::User,
+        SettingsSource::Project,
+        SettingsSource::Local,
+    ] {
         let enabled = get_enabled_plugins(source)?;
         if let Some(value) = enabled.get(plugin_id) {
             // Could be bool or array of scopes
@@ -653,8 +661,8 @@ pub fn save_marketplaces(config: &MarketplacesConfig) -> Result<()> {
             .with_context(|| format!("Failed to create config directory: {}", parent.display()))?;
     }
 
-    let content = serde_json::to_string_pretty(config)
-        .context("Failed to serialize marketplaces")?;
+    let content =
+        serde_json::to_string_pretty(config).context("Failed to serialize marketplaces")?;
 
     fs::write(&path, content)
         .with_context(|| format!("Failed to write marketplaces to {}", path.display()))?;
@@ -753,7 +761,9 @@ pub fn load_manifest_from_path(path: &Path) -> Result<PluginManifest> {
 
 /// Load a marketplace manifest from a directory
 pub fn load_marketplace_manifest(marketplace_dir: &Path) -> Result<MarketplaceManifest> {
-    let manifest_path = marketplace_dir.join(".claude-plugin").join("marketplace.json");
+    let manifest_path = marketplace_dir
+        .join(".claude-plugin")
+        .join("marketplace.json");
 
     if manifest_path.exists() {
         return load_marketplace_manifest_from_path(&manifest_path);
@@ -767,11 +777,19 @@ pub fn load_marketplace_manifest(marketplace_dir: &Path) -> Result<MarketplaceMa
 
 /// Load a marketplace manifest from a specific file path
 pub fn load_marketplace_manifest_from_path(path: &Path) -> Result<MarketplaceManifest> {
-    let content = fs::read_to_string(path)
-        .with_context(|| format!("Failed to read marketplace manifest from {}", path.display()))?;
+    let content = fs::read_to_string(path).with_context(|| {
+        format!(
+            "Failed to read marketplace manifest from {}",
+            path.display()
+        )
+    })?;
 
-    let manifest: MarketplaceManifest = serde_json::from_str(&content)
-        .with_context(|| format!("Failed to parse marketplace manifest from {}", path.display()))?;
+    let manifest: MarketplaceManifest = serde_json::from_str(&content).with_context(|| {
+        format!(
+            "Failed to parse marketplace manifest from {}",
+            path.display()
+        )
+    })?;
 
     validate_marketplace_manifest(&manifest)?;
     Ok(manifest)
@@ -781,14 +799,17 @@ pub fn load_marketplace_manifest_from_path(path: &Path) -> Result<MarketplaceMan
 pub fn validate_plugin_manifest(manifest: &PluginManifest) -> Result<()> {
     // Name is required and cannot be empty
     if manifest.name.is_empty() {
-        return Err(Error::InvalidInput("Plugin name cannot be empty".to_string()));
+        return Err(Error::InvalidInput(
+            "Plugin name cannot be empty".to_string(),
+        ));
     }
 
     // Name cannot contain spaces
     if manifest.name.contains(' ') {
-        return Err(Error::InvalidInput(
-            format!("Plugin name cannot contain spaces. Use kebab-case (e.g., 'my-plugin'). Got: '{}'", manifest.name)
-        ));
+        return Err(Error::InvalidInput(format!(
+            "Plugin name cannot contain spaces. Use kebab-case (e.g., 'my-plugin'). Got: '{}'",
+            manifest.name
+        )));
     }
 
     Ok(())
@@ -798,25 +819,31 @@ pub fn validate_plugin_manifest(manifest: &PluginManifest) -> Result<()> {
 pub fn validate_marketplace_manifest(manifest: &MarketplaceManifest) -> Result<()> {
     // Name is required and cannot be empty
     if manifest.name.is_empty() {
-        return Err(Error::InvalidInput("Marketplace name cannot be empty".to_string()));
+        return Err(Error::InvalidInput(
+            "Marketplace name cannot be empty".to_string(),
+        ));
     }
 
     // Name cannot contain spaces
     if manifest.name.contains(' ') {
-        return Err(Error::InvalidInput(
-            format!("Marketplace name cannot contain spaces. Use kebab-case. Got: '{}'", manifest.name)
-        ));
+        return Err(Error::InvalidInput(format!(
+            "Marketplace name cannot contain spaces. Use kebab-case. Got: '{}'",
+            manifest.name
+        )));
     }
 
     // Validate each plugin entry
     for plugin in &manifest.plugins {
         if plugin.name.is_empty() {
-            return Err(Error::InvalidInput("Plugin name cannot be empty".to_string()));
+            return Err(Error::InvalidInput(
+                "Plugin name cannot be empty".to_string(),
+            ));
         }
         if plugin.name.contains(' ') {
-            return Err(Error::InvalidInput(
-                format!("Plugin name cannot contain spaces. Got: '{}'", plugin.name)
-            ));
+            return Err(Error::InvalidInput(format!(
+                "Plugin name cannot contain spaces. Got: '{}'",
+                plugin.name
+            )));
         }
     }
 
@@ -851,9 +878,18 @@ pub fn parse_plugin_command(input: &str) -> PluginCommand {
                     let mut split = t.splitn(2, '@');
                     let plugin = split.next().map(|s| s.to_string());
                     let marketplace = split.next().map(|s| s.to_string());
-                    PluginCommand::Install { plugin, marketplace }
+                    PluginCommand::Install {
+                        plugin,
+                        marketplace,
+                    }
                 }
-                Some(t) if t.starts_with("http://") || t.starts_with("https://") || t.starts_with("file://") || t.contains('/') || t.contains('\\') => {
+                Some(t)
+                    if t.starts_with("http://")
+                        || t.starts_with("https://")
+                        || t.starts_with("file://")
+                        || t.contains('/')
+                        || t.contains('\\') =>
+                {
                     // This is a marketplace path, not a plugin name
                     PluginCommand::Install {
                         plugin: None,
@@ -899,7 +935,9 @@ pub fn parse_plugin_command(input: &str) -> PluginCommand {
 
             match action.as_deref() {
                 Some("add") => PluginCommand::Marketplace(MarketplaceCommand::Add { target }),
-                Some("remove") | Some("rm") => PluginCommand::Marketplace(MarketplaceCommand::Remove { target }),
+                Some("remove") | Some("rm") => {
+                    PluginCommand::Marketplace(MarketplaceCommand::Remove { target })
+                }
                 Some("update") => PluginCommand::Marketplace(MarketplaceCommand::Update { target }),
                 Some("list") => PluginCommand::Marketplace(MarketplaceCommand::List),
                 _ => PluginCommand::Marketplace(MarketplaceCommand::Menu),
@@ -926,7 +964,9 @@ pub const RESERVED_MARKETPLACE_NAMES: &[&str] = &[
 
 /// Check if a marketplace name is reserved
 pub fn is_reserved_marketplace_name(name: &str) -> bool {
-    RESERVED_MARKETPLACE_NAMES.iter().any(|reserved| *reserved == name.to_lowercase())
+    RESERVED_MARKETPLACE_NAMES
+        .iter()
+        .any(|reserved| *reserved == name.to_lowercase())
 }
 
 /// Check if a source is allowed to use a reserved name
@@ -937,12 +977,11 @@ pub fn can_use_reserved_name(name: &str, source: &MarketplaceSource) -> bool {
 
     // Only GitHub sources from anthropics/ organization can use reserved names
     match source {
-        MarketplaceSource::GitHub { repo, .. } => {
-            repo.to_lowercase().starts_with("anthropics/")
-        }
+        MarketplaceSource::GitHub { repo, .. } => repo.to_lowercase().starts_with("anthropics/"),
         MarketplaceSource::Git { url, .. } => {
             let url_lower = url.to_lowercase();
-            url_lower.contains("github.com/anthropics/") || url_lower.contains("git@github.com:anthropics/")
+            url_lower.contains("github.com/anthropics/")
+                || url_lower.contains("git@github.com:anthropics/")
         }
         _ => false,
     }
@@ -976,7 +1015,8 @@ pub fn parse_plugin_id(plugin_id: &str) -> (String, Option<String>) {
 /// Detect manifest type from path
 pub fn detect_manifest_type(path: &Path) -> ManifestType {
     let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    let parent_name = path.parent()
+    let parent_name = path
+        .parent()
         .and_then(|p| p.file_name())
         .and_then(|n| n.to_str())
         .unwrap_or("");
@@ -1201,13 +1241,19 @@ mod tests {
     fn test_parse_plugin_command_help() {
         assert!(matches!(parse_plugin_command("help"), PluginCommand::Help));
         assert!(matches!(parse_plugin_command("-h"), PluginCommand::Help));
-        assert!(matches!(parse_plugin_command("--help"), PluginCommand::Help));
+        assert!(matches!(
+            parse_plugin_command("--help"),
+            PluginCommand::Help
+        ));
     }
 
     #[test]
     fn test_parse_plugin_command_install() {
         match parse_plugin_command("install my-plugin@my-market") {
-            PluginCommand::Install { plugin, marketplace } => {
+            PluginCommand::Install {
+                plugin,
+                marketplace,
+            } => {
                 assert_eq!(plugin, Some("my-plugin".to_string()));
                 assert_eq!(marketplace, Some("my-market".to_string()));
             }
@@ -1215,7 +1261,10 @@ mod tests {
         }
 
         match parse_plugin_command("install my-plugin") {
-            PluginCommand::Install { plugin, marketplace } => {
+            PluginCommand::Install {
+                plugin,
+                marketplace,
+            } => {
                 assert_eq!(plugin, Some("my-plugin".to_string()));
                 assert_eq!(marketplace, None);
             }
@@ -1223,7 +1272,10 @@ mod tests {
         }
 
         match parse_plugin_command("install") {
-            PluginCommand::Install { plugin, marketplace } => {
+            PluginCommand::Install {
+                plugin,
+                marketplace,
+            } => {
                 assert_eq!(plugin, None);
                 assert_eq!(marketplace, None);
             }
@@ -1248,7 +1300,10 @@ mod tests {
 
     #[test]
     fn test_make_plugin_id() {
-        assert_eq!(make_plugin_id("my-plugin", Some("my-market")), "my-plugin@my-market");
+        assert_eq!(
+            make_plugin_id("my-plugin", Some("my-market")),
+            "my-plugin@my-market"
+        );
         assert_eq!(make_plugin_id("my-plugin", None), "my-plugin");
     }
 

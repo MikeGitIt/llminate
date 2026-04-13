@@ -15,9 +15,9 @@ mod basic_simple_tests {
         let s1 = "Hello, ";
         let s2 = "World!";
         let combined = format!("{}{}", s1, s2);
-        
+
         assert_eq!(combined, "Hello, World!", "String concatenation failed");
-        
+
         // Test string length
         assert_eq!(combined.len(), 13, "String length calculation failed");
     }
@@ -27,7 +27,7 @@ mod basic_simple_tests {
         // Test boolean operations
         let a = true;
         let b = false;
-        
+
         assert_eq!(a && b, false, "AND operation failed");
         assert_eq!(a || b, true, "OR operation failed");
         assert_eq!(!a, false, "NOT operation failed");

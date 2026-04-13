@@ -1,12 +1,12 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use rand::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
+use serde_json;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{debug, info, error};
-use std::collections::HashMap;
-use rand::{thread_rng, Rng};
-use base64::{Engine as _, engine::general_purpose::STANDARD};
-use serde_json;
+use tracing::{debug, error, info};
 
 /// OAuth configuration matching JavaScript uHA/obj16 objects
 #[derive(Debug, Clone)]
@@ -112,11 +112,18 @@ pub struct RolesResponse {
 #[derive(Debug, Clone)]
 pub enum OAuthFlowState {
     NotStarted,
-    WaitingForLogin { url: String },
+    WaitingForLogin {
+        url: String,
+    },
     CreatingApiKey,
     AboutToRetry,
-    Success { api_key: String },
-    Error { message: String, retry_state: Box<OAuthFlowState> },
+    Success {
+        api_key: String,
+    },
+    Error {
+        message: String,
+        retry_state: Box<OAuthFlowState>,
+    },
 }
 
 /// Organization profile response from OAuth profile endpoint
@@ -164,7 +171,7 @@ impl OAuthManager {
             is_manual_flow: false,
         }
     }
-    
+
     /// Generate PKCE challenge and verifier matching JavaScript implementation EXACTLY
     /// JavaScript (cli-jsdef-fixed.js lines 362417-362425):
     /// - variable13715(): 32 random bytes, base64url encoded (standard: +→-, /→_, =→removed)
@@ -182,11 +189,11 @@ impl OAuthManager {
         let verifier = verifier_base64
             .replace('+', "-")
             .replace('/', "_")
-            .replace('=', "");  // Remove padding entirely
+            .replace('=', ""); // Remove padding entirely
 
         // Create SHA256 hash of verifier for challenge (line 362424)
         // JavaScript hashes the verifier STRING (not the original bytes)
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(verifier.as_bytes());
         let hash = hasher.finalize();
@@ -196,7 +203,7 @@ impl OAuthManager {
         let challenge = challenge_base64
             .replace('+', "-")
             .replace('/', "_")
-            .replace('=', "");  // Remove padding entirely
+            .replace('=', ""); // Remove padding entirely
 
         debug!("PKCE generation debug:");
         debug!("  - Verifier length: {} chars", verifier.len());
@@ -204,7 +211,7 @@ impl OAuthManager {
 
         (verifier, challenge)
     }
-    
+
     /// Generate random state parameter for OAuth
     /// JavaScript (cli-jsdef-fixed.js lines 362427-362428): variable33302() = variable6043(TPA.randomBytes(32))
     fn generate_state() -> String {
@@ -212,40 +219,43 @@ impl OAuthManager {
         // JavaScript uses 32 random bytes for state (same as verifier)
         let state_bytes: Vec<u8> = (0..32).map(|_| rng.gen()).collect();
         // Standard base64url encoding (same as PKCE)
-        STANDARD.encode(&state_bytes)
+        STANDARD
+            .encode(&state_bytes)
             .replace('+', "-")
             .replace('/', "_")
             .replace('=', "")
     }
-    
+
     /// Start OAuth login flow
     pub async fn start_oauth_flow(&mut self, use_claude_ai: bool) -> Result<String> {
         let (verifier, challenge) = Self::generate_pkce();
         let state = Self::generate_state();
-        
+
         self.pkce_verifier = Some(verifier);
         self.oauth_state = Some(state.clone());
-        
+
         // Build authorization URL - MUST match JavaScript exactly
         let authorize_url = if use_claude_ai {
             &self.config.claude_ai_authorize_url
         } else {
             &self.config.console_authorize_url
         };
-        
+
         let redirect_uri = format!("http://localhost:{}/callback", self.config.redirect_port);
-        
+
         // Build URL with parameters in EXACT order from JavaScript
-        let mut url = url::Url::parse(authorize_url)
-            .context("Failed to parse authorize URL")?;
-        
+        let mut url = url::Url::parse(authorize_url).context("Failed to parse authorize URL")?;
+
         debug!("Building OAuth URL with base: {}", authorize_url);
         debug!("Client ID from config: '{}'", self.config.client_id);
         debug!("Client ID length: {}", self.config.client_id.len());
-        
+
         // Ensure we're using the correct production client_id
-        assert_eq!(self.config.client_id, "9d1c250a-e61b-44d9-88ed-5944d1962f5e", "Wrong client_id!");
-        
+        assert_eq!(
+            self.config.client_id, "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+            "Wrong client_id!"
+        );
+
         // Use ALL scopes - matching actual Claude Code behavior
         let scope = self.config.scopes.join(" ");
 
@@ -260,9 +270,9 @@ impl OAuthManager {
             .append_pair("code_challenge", &challenge)
             .append_pair("code_challenge_method", "S256")
             .append_pair("state", &state);
-        
+
         let auth_url = url.to_string();
-        
+
         // Log the exact URL being generated for debugging
         info!("=== OAUTH URL DEBUG ===");
         info!("Full OAuth URL: {}", auth_url);
@@ -276,14 +286,20 @@ impl OAuthManager {
         info!("  - response_type: code");
         info!("  - redirect_uri: {}", redirect_uri);
         info!("  - scope: {}", scope);
-        info!("  - code_challenge: {} (length: {})", challenge, challenge.len());
+        info!(
+            "  - code_challenge: {} (length: {})",
+            challenge,
+            challenge.len()
+        );
         info!("  - code_challenge_method: S256");
         info!("  - state: {} (length: {})", state, state.len());
         info!("=== END OAUTH URL DEBUG ===");
 
         // Update state
         let mut flow_state = self.state.lock().await;
-        *flow_state = OAuthFlowState::WaitingForLogin { url: auth_url.clone() };
+        *flow_state = OAuthFlowState::WaitingForLogin {
+            url: auth_url.clone(),
+        };
 
         Ok(auth_url)
     }
@@ -296,7 +312,7 @@ impl OAuthManager {
 
         self.pkce_verifier = Some(verifier);
         self.oauth_state = Some(state.clone());
-        self.is_manual_flow = true;  // Mark this as manual flow for token exchange
+        self.is_manual_flow = true; // Mark this as manual flow for token exchange
 
         // Use claude.ai authorize URL for Claude Desktop login
         let authorize_url = &self.config.claude_ai_authorize_url;
@@ -308,8 +324,7 @@ impl OAuthManager {
         let scope = self.config.scopes.join(" ");
 
         // Build URL with parameters matching JavaScript stringDecoder90 (isManual=true)
-        let mut url = url::Url::parse(authorize_url)
-            .context("Failed to parse authorize URL")?;
+        let mut url = url::Url::parse(authorize_url).context("Failed to parse authorize URL")?;
 
         url.query_pairs_mut()
             .clear()
@@ -328,7 +343,9 @@ impl OAuthManager {
 
         // Update state
         let mut flow_state = self.state.lock().await;
-        *flow_state = OAuthFlowState::WaitingForLogin { url: auth_url.clone() };
+        *flow_state = OAuthFlowState::WaitingForLogin {
+            url: auth_url.clone(),
+        };
 
         Ok(auth_url)
     }
@@ -336,16 +353,16 @@ impl OAuthManager {
     /// Start local HTTP server to receive OAuth callback
     /// If auth_url is provided, opens browser AFTER server is bound (matching JavaScript behavior)
     pub async fn start_callback_server(&self, auth_url: Option<&str>) -> Result<(String, String)> {
-        use warp::Filter;
         use std::sync::Arc;
         use tokio::sync::Mutex;
-        
+        use warp::Filter;
+
         let (tx, mut rx) = tokio::sync::oneshot::channel::<(String, String)>();
         let port = self.config.redirect_port;
-        
+
         // Wrap the sender in Arc<Mutex<Option>> so it can be shared and used once
         let tx = Arc::new(Mutex::new(Some(tx)));
-        
+
         // Create callback route - handle all OAuth response scenarios
         let callback = warp::path("callback")
             .and(warp::query::<HashMap<String, String>>())
@@ -428,7 +445,7 @@ impl OAuthManager {
                     }
                 }
             });
-        
+
         // Start server in background
         // Use bind_ephemeral() instead of run() so we know when the server is actually listening
         // This matches JavaScript behavior where start() resolves only after server.listen() callback
@@ -449,12 +466,14 @@ impl OAuthManager {
                 // Don't fail here, user can still manually navigate
             }
         }
-        
+
         // Wait for callback with timeout
         match tokio::time::timeout(
             std::time::Duration::from_secs(300), // 5 minute timeout
-            rx
-        ).await {
+            rx,
+        )
+        .await
+        {
             Ok(Ok((code, state))) => {
                 // Check if we received an error signal (empty strings)
                 if code.is_empty() && state.is_empty() {
@@ -467,7 +486,7 @@ impl OAuthManager {
             Err(_) => bail!("OAuth authentication timed out after 5 minutes"),
         }
     }
-    
+
     /// Handle manual authorization code input (when browser can't be opened)
     pub async fn handle_manual_auth_code(&mut self, full_code: &str) -> Result<String> {
         // Parse format: "code#state"
@@ -475,18 +494,18 @@ impl OAuthManager {
         if parts.len() != 2 {
             bail!("Invalid code format. Expected format: code#state");
         }
-        
+
         let code = parts[0];
         let state = parts[1];
-        
+
         // Verify state matches
         if self.oauth_state.as_ref() != Some(&state.to_string()) {
             bail!("Invalid state parameter - authentication may have been compromised");
         }
-        
+
         self.exchange_code_for_api_key(code).await
     }
-    
+
     /// Exchange authorization code for tokens
     async fn exchange_code_for_tokens(&self, code: &str) -> Result<TokenResponse> {
         let client = reqwest::Client::new();
@@ -503,21 +522,24 @@ impl OAuthManager {
             "client_id": &self.config.client_id,
             "redirect_uri": &redirect_uri,
         });
-        
+
         // Add PKCE verifier if present
         if let Some(verifier) = &self.pkce_verifier {
             body["code_verifier"] = serde_json::json!(verifier);
         }
-        
+
         // CRITICAL: JavaScript includes state in token exchange
         if let Some(state) = &self.oauth_state {
             body["state"] = serde_json::json!(state);
         }
-        
-        debug!("Token exchange request body: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
-        
+
+        debug!(
+            "Token exchange request body: {}",
+            serde_json::to_string_pretty(&body).unwrap_or_default()
+        );
+
         debug!("Exchanging authorization code for tokens");
-        
+
         // Send as JSON, not form data - matching JavaScript's MvA function
         let response = client
             .post(&self.config.token_url)
@@ -526,65 +548,66 @@ impl OAuthManager {
             .send()
             .await
             .context("Failed to exchange code for tokens")?;
-        
+
         if !response.status().is_success() {
             let error_text = response.text().await.unwrap_or_default();
             bail!("Token exchange failed: {}", error_text);
         }
-        
+
         let token_response: TokenResponse = response
             .json()
             .await
             .context("Failed to parse token response")?;
-        
+
         info!("Successfully obtained OAuth tokens");
         Ok(token_response)
     }
-    
+
     /// Convert OAuth token to API key
     async fn create_api_key_from_token(&self, access_token: &str) -> Result<String> {
         let client = reqwest::Client::new();
-        
+
         let mut state = self.state.lock().await;
         *state = OAuthFlowState::CreatingApiKey;
         drop(state);
-        
+
         debug!("Creating API key from OAuth token");
-        
+
         let response = client
             .post(&self.config.api_key_url)
             .header("Authorization", format!("Bearer {}", access_token))
             .send()
             .await
             .context("Failed to create API key")?;
-        
+
         if !response.status().is_success() {
             let error_text = response.text().await.unwrap_or_default();
-            
+
             // Check if it's a scope error
             if error_text.contains("org:create_api_key") {
                 bail!("OAuth token lacks required scope 'org:create_api_key'. Please ensure you have the correct permissions.");
             }
-            
+
             bail!("API key creation failed: {}", error_text);
         }
-        
+
         let api_key_response: ApiKeyResponse = response
             .json()
             .await
             .context("Failed to parse API key response")?;
-        
+
         info!("Successfully created API key from OAuth token");
         Ok(api_key_response.raw_key)
     }
-    
+
     /// Check if scopes include user:inference (for Claude Max direct token usage)
     /// JavaScript (cli-jsdef-fixed.js line 71054-71056):
     /// function variable11754(variable22124) {
     ///     return Boolean(variable22124?.includes(variable4301));  // variable4301 = "user:inference"
     /// }
     fn has_inference_scope(scopes: &Option<String>) -> bool {
-        scopes.as_ref()
+        scopes
+            .as_ref()
             .map(|s| s.split_whitespace().any(|scope| scope == "user:inference"))
             .unwrap_or(false)
     }
@@ -602,7 +625,9 @@ impl OAuthManager {
         let tokens = self.exchange_code_for_tokens(code).await?;
 
         // Parse scopes into a list
-        let scopes: Vec<String> = tokens.scope.as_ref()
+        let scopes: Vec<String> = tokens
+            .scope
+            .as_ref()
             .map(|s| s.split_whitespace().map(|s| s.to_string()).collect())
             .unwrap_or_default();
 
@@ -623,7 +648,10 @@ impl OAuthManager {
                     uuid
                 }
                 Err(e) => {
-                    error!("Failed to fetch OAuth profile: {} - metadata may be incomplete", e);
+                    error!(
+                        "Failed to fetch OAuth profile: {} - metadata may be incomplete",
+                        e
+                    );
                     None
                 }
             };
@@ -631,7 +659,9 @@ impl OAuthManager {
             // For Claude Max, we use the OAuth token directly
             // No API key creation needed
             let mut state = self.state.lock().await;
-            *state = OAuthFlowState::Success { api_key: tokens.access_token.clone() };
+            *state = OAuthFlowState::Success {
+                api_key: tokens.access_token.clone(),
+            };
 
             return Ok(OAuthCredential::OAuthToken {
                 access_token: tokens.access_token,
@@ -649,7 +679,9 @@ impl OAuthManager {
 
         // Update state to success
         let mut state = self.state.lock().await;
-        *state = OAuthFlowState::Success { api_key: api_key.clone() };
+        *state = OAuthFlowState::Success {
+            api_key: api_key.clone(),
+        };
 
         Ok(OAuthCredential::ApiKey(api_key))
     }
@@ -666,19 +698,19 @@ impl OAuthManager {
             }
         }
     }
-    
+
     /// Get current OAuth flow state
     pub async fn get_state(&self) -> OAuthFlowState {
         self.state.lock().await.clone()
     }
-    
+
     /// Fetch OAuth profile to get organization details
     pub async fn fetch_oauth_profile(access_token: &str) -> Result<OAuthProfile> {
         let client = reqwest::Client::new();
         let url = format!("{}/api/oauth/profile", OAuthConfig::default().base_api_url);
-        
+
         debug!("Fetching OAuth profile from {}", url);
-        
+
         let response = client
             .get(&url)
             .header("Authorization", format!("Bearer {}", access_token))
@@ -686,28 +718,36 @@ impl OAuthManager {
             .send()
             .await
             .context("Failed to fetch OAuth profile")?;
-        
+
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
-            bail!("Profile fetch failed with status {}: {}", status, error_text);
+            bail!(
+                "Profile fetch failed with status {}: {}",
+                status,
+                error_text
+            );
         }
-        
+
         let profile: OAuthProfile = response
             .json()
             .await
             .context("Failed to parse OAuth profile")?;
-        
+
         debug!("OAuth profile: {:?}", profile);
         Ok(profile)
     }
-    
+
     /// Determine subscription type from OAuth token
     /// Returns: "max" | "pro" | "enterprise" | "team" | None
     pub async fn get_subscription_type(access_token: &str) -> Result<Option<String>> {
         let profile = Self::fetch_oauth_profile(access_token).await?;
-        
-        let subscription_type = match profile.organization.as_ref().and_then(|o| o.organization_type.as_ref()) {
+
+        let subscription_type = match profile
+            .organization
+            .as_ref()
+            .and_then(|o| o.organization_type.as_ref())
+        {
             Some(org_type) => match org_type.as_str() {
                 "claude_max" => Some("max".to_string()),
                 "claude_pro" => Some("pro".to_string()),
@@ -717,11 +757,11 @@ impl OAuthManager {
             },
             None => None,
         };
-        
+
         debug!("Subscription type: {:?}", subscription_type);
         Ok(subscription_type)
     }
-    
+
     /// Determine which OAuth endpoint to use based on existing token
     /// Returns true for claude.ai, false for console.anthropic.com
     pub async fn determine_oauth_endpoint(existing_token: Option<&str>) -> Result<bool> {
@@ -730,36 +770,42 @@ impl OAuthManager {
                 // No existing token, default to console.anthropic.com
                 debug!("No existing token, defaulting to console.anthropic.com");
                 Ok(false)
-            },
+            }
             Some(token) => {
                 match Self::get_subscription_type(token).await {
                     Ok(Some(sub_type)) => {
                         // Use claude.ai for Max and Pro subscriptions
                         let use_claude_ai = sub_type == "max" || sub_type == "pro";
-                        debug!("Subscription type '{}' -> use_claude_ai: {}", sub_type, use_claude_ai);
+                        debug!(
+                            "Subscription type '{}' -> use_claude_ai: {}",
+                            sub_type, use_claude_ai
+                        );
                         Ok(use_claude_ai)
-                    },
+                    }
                     Ok(None) => {
                         debug!("Unknown subscription type, defaulting to console.anthropic.com");
                         Ok(false)
-                    },
+                    }
                     Err(e) => {
                         // If we can't fetch profile, default to console.anthropic.com
-                        debug!("Failed to fetch profile: {}, defaulting to console.anthropic.com", e);
+                        debug!(
+                            "Failed to fetch profile: {}, defaulting to console.anthropic.com",
+                            e
+                        );
                         Ok(false)
                     }
                 }
             }
         }
     }
-    
+
     /// Open browser for authentication
     pub fn open_browser(url: &str) -> Result<()> {
         info!("Opening browser for OAuth authentication");
         debug!("=== BROWSER URL DEBUG ===");
         debug!("Opening browser with URL: {}", url);
         debug!("URL length: {} characters", url.len());
-        
+
         // Check if URL contains client_id
         if !url.contains("client_id=") {
             error!("WARNING: URL does not contain 'client_id=' parameter!");
@@ -767,7 +813,7 @@ impl OAuthManager {
             debug!("✓ URL contains client_id parameter");
         }
         debug!("=== END BROWSER URL DEBUG ===");
-        
+
         #[cfg(target_os = "macos")]
         {
             std::process::Command::new("open")
@@ -775,7 +821,7 @@ impl OAuthManager {
                 .spawn()
                 .context("Failed to open browser")?;
         }
-        
+
         #[cfg(target_os = "linux")]
         {
             std::process::Command::new("xdg-open")
@@ -783,7 +829,7 @@ impl OAuthManager {
                 .spawn()
                 .context("Failed to open browser")?;
         }
-        
+
         #[cfg(target_os = "windows")]
         {
             std::process::Command::new("cmd")
@@ -791,7 +837,7 @@ impl OAuthManager {
                 .spawn()
                 .context("Failed to open browser")?;
         }
-        
+
         Ok(())
     }
 }
@@ -800,9 +846,9 @@ impl OAuthManager {
 pub async fn fetch_organization_roles(access_token: &str) -> Result<RolesResponse> {
     let client = reqwest::Client::new();
     let config = OAuthConfig::default();
-    
+
     debug!("Fetching organization roles");
-    
+
     let response = client
         .get(&config.roles_url)
         .header("Authorization", format!("Bearer {}", access_token))
@@ -810,17 +856,17 @@ pub async fn fetch_organization_roles(access_token: &str) -> Result<RolesRespons
         .send()
         .await
         .context("Failed to fetch organization roles")?;
-    
+
     if !response.status().is_success() {
         let error_text = response.text().await.unwrap_or_default();
         bail!("Failed to fetch roles: {}", error_text);
     }
-    
+
     let roles: RolesResponse = response
         .json()
         .await
         .context("Failed to parse roles response")?;
-    
+
     debug!("Organization roles: {:?}", roles);
     Ok(roles)
 }

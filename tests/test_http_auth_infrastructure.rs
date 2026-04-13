@@ -1,12 +1,11 @@
+use anyhow::Result;
+use async_trait::async_trait;
 use llminate::auth::http::{
-    HttpRequest, HttpSigner, HttpApiKeyAuthSigner, HttpBearerAuthSigner,
-    NoAuthSigner, HttpApiKeyAuthLocation, DefaultIdentityProviderConfig,
-    IdentityProvider, QueryValue, clone_query
+    clone_query, DefaultIdentityProviderConfig, HttpApiKeyAuthLocation, HttpApiKeyAuthSigner,
+    HttpBearerAuthSigner, HttpRequest, HttpSigner, IdentityProvider, NoAuthSigner, QueryValue,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use anyhow::Result;
-use async_trait::async_trait;
 
 #[cfg(test)]
 mod http_request_tests {
@@ -31,20 +30,33 @@ mod http_request_tests {
         assert_eq!(req.path, "/api");
 
         // Test with query parameters
-        let req = HttpRequest::new("GET".to_string(), "https://api.example.com/search?q=test&limit=10").unwrap();
+        let req = HttpRequest::new(
+            "GET".to_string(),
+            "https://api.example.com/search?q=test&limit=10",
+        )
+        .unwrap();
         assert!(matches!(req.query.get("q"), Some(QueryValue::Single(v)) if v == "test"));
         assert!(matches!(req.query.get("limit"), Some(QueryValue::Single(v)) if v == "10"));
 
         // Test with multiple same-name query parameters
-        let req = HttpRequest::new("GET".to_string(), "https://api.example.com/test?tag=a&tag=b&tag=c").unwrap();
+        let req = HttpRequest::new(
+            "GET".to_string(),
+            "https://api.example.com/test?tag=a&tag=b&tag=c",
+        )
+        .unwrap();
         assert!(matches!(req.query.get("tag"), Some(QueryValue::Multiple(v)) if v.len() == 3));
     }
 
     #[test]
     fn test_http_request_clone() {
-        let mut original = HttpRequest::new("POST".to_string(), "https://api.example.com/test?key=value").unwrap();
-        original.headers.insert("X-Custom-Header".to_string(), "test-value".to_string());
-        original.headers.insert("Authorization".to_string(), "Bearer token".to_string());
+        let mut original =
+            HttpRequest::new("POST".to_string(), "https://api.example.com/test?key=value").unwrap();
+        original
+            .headers
+            .insert("X-Custom-Header".to_string(), "test-value".to_string());
+        original
+            .headers
+            .insert("Authorization".to_string(), "Bearer token".to_string());
         original.body = Some(b"test body content".to_vec());
 
         // Test clone method
@@ -55,7 +67,10 @@ mod http_request_tests {
         assert_eq!(cloned.port, original.port);
         assert_eq!(cloned.path, original.path);
         assert_eq!(cloned.headers.len(), original.headers.len());
-        assert_eq!(cloned.headers.get("X-Custom-Header"), Some(&"test-value".to_string()));
+        assert_eq!(
+            cloned.headers.get("X-Custom-Header"),
+            Some(&"test-value".to_string())
+        );
         assert_eq!(cloned.body, original.body);
 
         // Test static clone method
@@ -117,21 +132,30 @@ mod http_request_tests {
         assert_eq!(req.build_url(), "http://api.example.com/test");
 
         // URL with query parameters
-        let mut req = HttpRequest::new("GET".to_string(), "https://api.example.com/search").unwrap();
-        req.query.insert("q".to_string(), QueryValue::Single("test query".to_string()));
-        req.query.insert("limit".to_string(), QueryValue::Single("10".to_string()));
+        let mut req =
+            HttpRequest::new("GET".to_string(), "https://api.example.com/search").unwrap();
+        req.query.insert(
+            "q".to_string(),
+            QueryValue::Single("test query".to_string()),
+        );
+        req.query
+            .insert("limit".to_string(), QueryValue::Single("10".to_string()));
         let url = req.build_url();
         assert!(url.starts_with("https://api.example.com/search?"));
         assert!(url.contains("q=test%20query"));
         assert!(url.contains("limit=10"));
 
         // URL with multiple same-name parameters
-        let mut req = HttpRequest::new("GET".to_string(), "https://api.example.com/filter").unwrap();
-        req.query.insert("tag".to_string(), QueryValue::Multiple(vec![
-            "rust".to_string(),
-            "async".to_string(),
-            "web".to_string()
-        ]));
+        let mut req =
+            HttpRequest::new("GET".to_string(), "https://api.example.com/filter").unwrap();
+        req.query.insert(
+            "tag".to_string(),
+            QueryValue::Multiple(vec![
+                "rust".to_string(),
+                "async".to_string(),
+                "web".to_string(),
+            ]),
+        );
         let url = req.build_url();
         assert!(url.contains("tag=rust"));
         assert!(url.contains("tag=async"));
@@ -141,12 +165,18 @@ mod http_request_tests {
     #[test]
     fn test_clone_query() {
         let mut original = HashMap::new();
-        original.insert("simple".to_string(), QueryValue::Single("value".to_string()));
-        original.insert("array".to_string(), QueryValue::Multiple(vec![
-            "first".to_string(),
-            "second".to_string(),
-            "third".to_string()
-        ]));
+        original.insert(
+            "simple".to_string(),
+            QueryValue::Single("value".to_string()),
+        );
+        original.insert(
+            "array".to_string(),
+            QueryValue::Multiple(vec![
+                "first".to_string(),
+                "second".to_string(),
+                "third".to_string(),
+            ]),
+        );
 
         let cloned = clone_query(&original);
 
@@ -182,7 +212,8 @@ mod signer_tests {
     #[tokio::test]
     async fn test_bearer_auth_signer_success() {
         let signer = HttpBearerAuthSigner;
-        let request = HttpRequest::new("GET".to_string(), "https://api.example.com/protected").unwrap();
+        let request =
+            HttpRequest::new("GET".to_string(), "https://api.example.com/protected").unwrap();
         let identity = json!({
             "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test"
         });
@@ -198,7 +229,8 @@ mod signer_tests {
     #[tokio::test]
     async fn test_bearer_auth_signer_missing_token() {
         let signer = HttpBearerAuthSigner;
-        let request = HttpRequest::new("GET".to_string(), "https://api.example.com/protected").unwrap();
+        let request =
+            HttpRequest::new("GET".to_string(), "https://api.example.com/protected").unwrap();
         let identity = json!({}); // No token
 
         let result = signer.sign(&request, &identity, None).await;
@@ -221,9 +253,15 @@ mod signer_tests {
             "in": "header"
         });
 
-        let signed = signer.sign(&request, &identity, Some(&props)).await.unwrap();
+        let signed = signer
+            .sign(&request, &identity, Some(&props))
+            .await
+            .unwrap();
 
-        assert_eq!(signed.headers.get("X-API-Key"), Some(&"sk-test123456789".to_string()));
+        assert_eq!(
+            signed.headers.get("X-API-Key"),
+            Some(&"sk-test123456789".to_string())
+        );
     }
 
     #[tokio::test]
@@ -239,9 +277,15 @@ mod signer_tests {
             "scheme": "ApiKey"
         });
 
-        let signed = signer.sign(&request, &identity, Some(&props)).await.unwrap();
+        let signed = signer
+            .sign(&request, &identity, Some(&props))
+            .await
+            .unwrap();
 
-        assert_eq!(signed.headers.get("Authorization"), Some(&"ApiKey test-key-123".to_string()));
+        assert_eq!(
+            signed.headers.get("Authorization"),
+            Some(&"ApiKey test-key-123".to_string())
+        );
     }
 
     #[tokio::test]
@@ -256,7 +300,10 @@ mod signer_tests {
             "in": "query"
         });
 
-        let signed = signer.sign(&request, &identity, Some(&props)).await.unwrap();
+        let signed = signer
+            .sign(&request, &identity, Some(&props))
+            .await
+            .unwrap();
 
         assert!(matches!(
             signed.query.get("api_key"),
@@ -296,7 +343,10 @@ mod signer_tests {
         let result = signer.sign(&request, &identity, None).await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("signer properties are missing"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("signer properties are missing"));
     }
 
     #[tokio::test]
@@ -313,7 +363,10 @@ mod signer_tests {
         let result = signer.sign(&request, &identity, Some(&props)).await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("`name` signer property is missing"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("`name` signer property is missing"));
     }
 
     #[tokio::test]
@@ -330,7 +383,10 @@ mod signer_tests {
         let result = signer.sign(&request, &identity, Some(&props)).await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("`in` signer property is missing"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("`in` signer property is missing"));
     }
 
     #[tokio::test]
@@ -346,14 +402,20 @@ mod signer_tests {
         let result = signer.sign(&request, &identity, Some(&props)).await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("`apiKey` is not defined"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("`apiKey` is not defined"));
     }
 
     #[tokio::test]
     async fn test_request_cloning_preserves_original() {
         let signer = HttpApiKeyAuthSigner;
-        let mut original = HttpRequest::new("GET".to_string(), "https://api.example.com/data").unwrap();
-        original.headers.insert("X-Original".to_string(), "should-remain".to_string());
+        let mut original =
+            HttpRequest::new("GET".to_string(), "https://api.example.com/data").unwrap();
+        original
+            .headers
+            .insert("X-Original".to_string(), "should-remain".to_string());
 
         let identity = json!({
             "apiKey": "test-key"
@@ -363,15 +425,27 @@ mod signer_tests {
             "in": "header"
         });
 
-        let signed = signer.sign(&original, &identity, Some(&props)).await.unwrap();
+        let signed = signer
+            .sign(&original, &identity, Some(&props))
+            .await
+            .unwrap();
 
         // Original should be unchanged
         assert!(!original.headers.contains_key("X-API-Key"));
-        assert_eq!(original.headers.get("X-Original"), Some(&"should-remain".to_string()));
+        assert_eq!(
+            original.headers.get("X-Original"),
+            Some(&"should-remain".to_string())
+        );
 
         // Signed should have both headers
-        assert_eq!(signed.headers.get("X-API-Key"), Some(&"test-key".to_string()));
-        assert_eq!(signed.headers.get("X-Original"), Some(&"should-remain".to_string()));
+        assert_eq!(
+            signed.headers.get("X-API-Key"),
+            Some(&"test-key".to_string())
+        );
+        assert_eq!(
+            signed.headers.get("X-Original"),
+            Some(&"should-remain".to_string())
+        );
     }
 }
 
@@ -429,31 +503,48 @@ mod identity_provider_tests {
         // Create config with identity providers
         let mut config = DefaultIdentityProviderConfig::new(HashMap::new());
 
-        config.add_provider("bearer".to_string(), Box::new(MockIdentityProvider {
-            identity: json!({"token": "test-bearer-token"}),
-        }));
+        config.add_provider(
+            "bearer".to_string(),
+            Box::new(MockIdentityProvider {
+                identity: json!({"token": "test-bearer-token"}),
+            }),
+        );
 
-        config.add_provider("apiKey".to_string(), Box::new(MockIdentityProvider {
-            identity: json!({"apiKey": "test-api-key"}),
-        }));
+        config.add_provider(
+            "apiKey".to_string(),
+            Box::new(MockIdentityProvider {
+                identity: json!({"apiKey": "test-api-key"}),
+            }),
+        );
 
         // Test with bearer signer
         if let Some(provider) = config.get_identity_provider("bearer") {
             let identity = provider.get_identity().await.unwrap();
-            let request = HttpRequest::new("GET".to_string(), "https://api.example.com/test").unwrap();
+            let request =
+                HttpRequest::new("GET".to_string(), "https://api.example.com/test").unwrap();
             let signer = HttpBearerAuthSigner;
             let signed = signer.sign(&request, &identity, None).await.unwrap();
-            assert_eq!(signed.headers.get("Authorization"), Some(&"Bearer test-bearer-token".to_string()));
+            assert_eq!(
+                signed.headers.get("Authorization"),
+                Some(&"Bearer test-bearer-token".to_string())
+            );
         }
 
         // Test with API key signer
         if let Some(provider) = config.get_identity_provider("apiKey") {
             let identity = provider.get_identity().await.unwrap();
-            let request = HttpRequest::new("GET".to_string(), "https://api.example.com/test").unwrap();
+            let request =
+                HttpRequest::new("GET".to_string(), "https://api.example.com/test").unwrap();
             let signer = HttpApiKeyAuthSigner;
             let props = json!({"name": "X-API-Key", "in": "header"});
-            let signed = signer.sign(&request, &identity, Some(&props)).await.unwrap();
-            assert_eq!(signed.headers.get("X-API-Key"), Some(&"test-api-key".to_string()));
+            let signed = signer
+                .sign(&request, &identity, Some(&props))
+                .await
+                .unwrap();
+            assert_eq!(
+                signed.headers.get("X-API-Key"),
+                Some(&"test-api-key".to_string())
+            );
         }
     }
 }
@@ -465,8 +556,11 @@ mod integration_tests {
     #[tokio::test]
     async fn test_full_auth_flow_with_bearer() {
         // Create request
-        let mut request = HttpRequest::new("POST".to_string(), "https://api.anthropic.com/v1/messages").unwrap();
-        request.headers.insert("Content-Type".to_string(), "application/json".to_string());
+        let mut request =
+            HttpRequest::new("POST".to_string(), "https://api.anthropic.com/v1/messages").unwrap();
+        request
+            .headers
+            .insert("Content-Type".to_string(), "application/json".to_string());
         request.body = Some(br#"{"model":"claude-3","messages":[]}"#.to_vec());
 
         // Setup identity
@@ -479,15 +573,25 @@ mod integration_tests {
         let signed = signer.sign(&request, &identity, None).await.unwrap();
 
         // Verify
-        assert_eq!(signed.headers.get("Authorization"), Some(&"Bearer sk-ant-api03-test-token".to_string()));
-        assert_eq!(signed.headers.get("Content-Type"), Some(&"application/json".to_string()));
+        assert_eq!(
+            signed.headers.get("Authorization"),
+            Some(&"Bearer sk-ant-api03-test-token".to_string())
+        );
+        assert_eq!(
+            signed.headers.get("Content-Type"),
+            Some(&"application/json".to_string())
+        );
         assert_eq!(signed.body, request.body);
     }
 
     #[tokio::test]
     async fn test_full_auth_flow_with_api_key() {
         // Create request
-        let request = HttpRequest::new("GET".to_string(), "https://api.example.com/v2/data?format=json").unwrap();
+        let request = HttpRequest::new(
+            "GET".to_string(),
+            "https://api.example.com/v2/data?format=json",
+        )
+        .unwrap();
 
         // Setup identity
         let identity = json!({
@@ -500,7 +604,10 @@ mod integration_tests {
             "name": "api_key",
             "in": "query"
         });
-        let signed = signer.sign(&request, &identity, Some(&props)).await.unwrap();
+        let signed = signer
+            .sign(&request, &identity, Some(&props))
+            .await
+            .unwrap();
 
         // Build final URL
         let final_url = signed.build_url();
@@ -516,16 +623,28 @@ mod integration_tests {
         let api_signer = HttpApiKeyAuthSigner;
         let api_identity = json!({"apiKey": "test-api-key"});
         let api_props = json!({"name": "X-API-Key", "in": "header"});
-        let signed1 = api_signer.sign(&original, &api_identity, Some(&api_props)).await.unwrap();
+        let signed1 = api_signer
+            .sign(&original, &api_identity, Some(&api_props))
+            .await
+            .unwrap();
 
         // Second signer - Bearer token (on already signed request)
         let bearer_signer = HttpBearerAuthSigner;
         let bearer_identity = json!({"token": "bearer-token"});
-        let signed2 = bearer_signer.sign(&signed1, &bearer_identity, None).await.unwrap();
+        let signed2 = bearer_signer
+            .sign(&signed1, &bearer_identity, None)
+            .await
+            .unwrap();
 
         // Should have both authentication headers
-        assert_eq!(signed2.headers.get("X-API-Key"), Some(&"test-api-key".to_string()));
-        assert_eq!(signed2.headers.get("Authorization"), Some(&"Bearer bearer-token".to_string()));
+        assert_eq!(
+            signed2.headers.get("X-API-Key"),
+            Some(&"test-api-key".to_string())
+        );
+        assert_eq!(
+            signed2.headers.get("Authorization"),
+            Some(&"Bearer bearer-token".to_string())
+        );
 
         // Original should be unchanged
         assert_eq!(original.headers.len(), 0);
@@ -535,8 +654,8 @@ mod integration_tests {
 #[cfg(test)]
 mod real_world_integration_tests {
     use super::*;
-    use wiremock::{MockServer, Mock, ResponseTemplate};
-    use wiremock::matchers::{header, query_param, method, path};
+    use wiremock::matchers::{header, method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[tokio::test]
     async fn test_api_key_header_with_mock_server() {
@@ -554,13 +673,20 @@ mod real_world_integration_tests {
             .await;
 
         // Create request
-        let request = HttpRequest::new("GET".to_string(), &format!("{}/api/v1/users", mock_server.uri())).unwrap();
+        let request = HttpRequest::new(
+            "GET".to_string(),
+            &format!("{}/api/v1/users", mock_server.uri()),
+        )
+        .unwrap();
 
         // Sign with API key
         let signer = HttpApiKeyAuthSigner;
         let identity = json!({"apiKey": "test-api-key-123"});
         let props = json!({"name": "X-API-Key", "in": "header"});
-        let signed = signer.sign(&request, &identity, Some(&props)).await.unwrap();
+        let signed = signer
+            .sign(&request, &identity, Some(&props))
+            .await
+            .unwrap();
 
         // Convert to reqwest and execute
         let client = reqwest::Client::new();
@@ -592,13 +718,20 @@ mod real_world_integration_tests {
             .await;
 
         // Create request
-        let request = HttpRequest::new("GET".to_string(), &format!("{}/api/v1/data", mock_server.uri())).unwrap();
+        let request = HttpRequest::new(
+            "GET".to_string(),
+            &format!("{}/api/v1/data", mock_server.uri()),
+        )
+        .unwrap();
 
         // Sign with API key in query
         let signer = HttpApiKeyAuthSigner;
         let identity = json!({"apiKey": "secret-key-456"});
         let props = json!({"name": "api_key", "in": "query"});
-        let signed = signer.sign(&request, &identity, Some(&props)).await.unwrap();
+        let signed = signer
+            .sign(&request, &identity, Some(&props))
+            .await
+            .unwrap();
 
         // Execute request
         let client = reqwest::Client::new();
@@ -627,8 +760,14 @@ mod real_world_integration_tests {
             .await;
 
         // Create request
-        let mut request = HttpRequest::new("POST".to_string(), &format!("{}/api/v1/messages", mock_server.uri())).unwrap();
-        request.headers.insert("Content-Type".to_string(), "application/json".to_string());
+        let mut request = HttpRequest::new(
+            "POST".to_string(),
+            &format!("{}/api/v1/messages", mock_server.uri()),
+        )
+        .unwrap();
+        request
+            .headers
+            .insert("Content-Type".to_string(), "application/json".to_string());
         request.body = Some(br#"{"text":"Hello"}"#.to_vec());
 
         // Sign with Bearer token
@@ -671,18 +810,28 @@ mod real_world_integration_tests {
             .await;
 
         // Create request
-        let request = HttpRequest::new("GET".to_string(), &format!("{}/api/v1/secure", mock_server.uri())).unwrap();
+        let request = HttpRequest::new(
+            "GET".to_string(),
+            &format!("{}/api/v1/secure", mock_server.uri()),
+        )
+        .unwrap();
 
         // First sign with API key
         let api_signer = HttpApiKeyAuthSigner;
         let api_identity = json!({"apiKey": "api-key"});
         let api_props = json!({"name": "X-API-Key", "in": "header"});
-        let signed_once = api_signer.sign(&request, &api_identity, Some(&api_props)).await.unwrap();
+        let signed_once = api_signer
+            .sign(&request, &api_identity, Some(&api_props))
+            .await
+            .unwrap();
 
         // Then sign with Bearer token
         let bearer_signer = HttpBearerAuthSigner;
         let bearer_identity = json!({"token": "oauth-token"});
-        let signed_twice = bearer_signer.sign(&signed_once, &bearer_identity, None).await.unwrap();
+        let signed_twice = bearer_signer
+            .sign(&signed_once, &bearer_identity, None)
+            .await
+            .unwrap();
 
         // Execute request
         let client = reqwest::Client::new();
@@ -713,7 +862,11 @@ mod real_world_integration_tests {
             .await;
 
         // Create request
-        let request = HttpRequest::new("GET".to_string(), &format!("{}/api/v1/public", mock_server.uri())).unwrap();
+        let request = HttpRequest::new(
+            "GET".to_string(),
+            &format!("{}/api/v1/public", mock_server.uri()),
+        )
+        .unwrap();
 
         // Use NoAuthSigner
         let signer = NoAuthSigner;
@@ -749,9 +902,12 @@ mod real_world_integration_tests {
 
         // Setup provider config
         let mut config = DefaultIdentityProviderConfig::new(HashMap::new());
-        config.add_provider("primary".to_string(), Box::new(ApiKeyProvider {
-            key: "sk-production-key".to_string(),
-        }));
+        config.add_provider(
+            "primary".to_string(),
+            Box::new(ApiKeyProvider {
+                key: "sk-production-key".to_string(),
+            }),
+        );
 
         // Get provider and sign request
         let provider = config.get_identity_provider("primary").unwrap();
@@ -760,8 +916,14 @@ mod real_world_integration_tests {
         let request = HttpRequest::new("GET".to_string(), "https://api.example.com/test").unwrap();
         let signer = HttpApiKeyAuthSigner;
         let props = json!({"name": "X-API-Key", "in": "header"});
-        let signed = signer.sign(&request, &identity, Some(&props)).await.unwrap();
+        let signed = signer
+            .sign(&request, &identity, Some(&props))
+            .await
+            .unwrap();
 
-        assert_eq!(signed.headers.get("X-API-Key"), Some(&"sk-production-key".to_string()));
+        assert_eq!(
+            signed.headers.get("X-API-Key"),
+            Some(&"sk-production-key".to_string())
+        );
     }
 }

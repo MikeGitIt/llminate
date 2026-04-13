@@ -1,11 +1,11 @@
 use llminate::auth::client::*;
-use reqwest::header::{HeaderMap, HeaderValue, HeaderName};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
+use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
-use wiremock::matchers::{method, path, header};
 
 #[tokio::test]
 async fn test_client_creation_with_api_key() {
@@ -58,12 +58,7 @@ async fn test_validate_headers_with_api_key() {
 
     // Build headers should succeed with API key
     let options = RequestOptions::default();
-    let result = client.build_headers(
-        &reqwest::Method::POST,
-        HeaderMap::new(),
-        0,
-        &options
-    );
+    let result = client.build_headers(&reqwest::Method::POST, HeaderMap::new(), 0, &options);
 
     assert!(result.is_ok());
     let headers = result.unwrap();
@@ -79,12 +74,7 @@ async fn test_validate_headers_with_bearer_token() {
 
     // Build headers should succeed with bearer token
     let options = RequestOptions::default();
-    let result = client.build_headers(
-        &reqwest::Method::POST,
-        HeaderMap::new(),
-        0,
-        &options
-    );
+    let result = client.build_headers(&reqwest::Method::POST, HeaderMap::new(), 0, &options);
 
     assert!(result.is_ok());
     let headers = result.unwrap();
@@ -100,16 +90,13 @@ async fn test_validate_headers_fails_without_auth() {
 
     // Build headers should fail without any auth
     let options = RequestOptions::default();
-    let result = client.build_headers(
-        &reqwest::Method::POST,
-        HeaderMap::new(),
-        0,
-        &options
-    );
+    let result = client.build_headers(&reqwest::Method::POST, HeaderMap::new(), 0, &options);
 
     assert!(result.is_err());
     let err = result.unwrap_err();
-    assert!(err.to_string().contains("Could not resolve authentication method"));
+    assert!(err
+        .to_string()
+        .contains("Could not resolve authentication method"));
 }
 
 #[tokio::test]
@@ -129,12 +116,7 @@ async fn test_validate_headers_with_explicit_null() {
     options.headers = Some(headers);
 
     // This should succeed because the header was explicitly nulled
-    let result = client.build_headers(
-        &reqwest::Method::POST,
-        HeaderMap::new(),
-        0,
-        &options
-    );
+    let result = client.build_headers(&reqwest::Method::POST, HeaderMap::new(), 0, &options);
 
     // The validation should pass because nulling is explicit
     assert!(result.is_ok());
@@ -144,13 +126,8 @@ async fn test_validate_headers_with_explicit_null() {
 async fn test_bedrock_client_empty_validation() {
     // Bedrock client should have empty validateHeaders
     let config = ClientConfig::default();
-    let client = BedrockClient::new(
-        Some("us-west-2".to_string()),
-        None,
-        None,
-        None,
-        config,
-    ).unwrap();
+    let client =
+        BedrockClient::new(Some("us-west-2".to_string()), None, None, None, config).unwrap();
 
     // Even without auth, Bedrock should not fail validation
     // (It uses AWS SigV4 instead)
@@ -161,11 +138,7 @@ async fn test_bedrock_client_empty_validation() {
 async fn test_vertex_client_empty_validation() {
     // Vertex client should have empty validateHeaders
     let config = ClientConfig::default();
-    let client = VertexClient::new(
-        Some("us-central1".to_string()),
-        None,
-        config,
-    ).unwrap();
+    let client = VertexClient::new(Some("us-central1".to_string()), None, config).unwrap();
 
     // Even without auth, Vertex should not fail validation
     // (It uses Google Cloud auth instead)
@@ -182,13 +155,9 @@ async fn test_header_merging() {
     headers2.insert("x-custom-1", HeaderValue::from_static("override"));
 
     let mut headers3 = HeaderMap::new();
-    headers3.insert("x-custom-3", HeaderValue::from_static(""));  // Null header
+    headers3.insert("x-custom-3", HeaderValue::from_static("")); // Null header
 
-    let merged = merge_headers(vec![
-        Some(headers1),
-        Some(headers2),
-        Some(headers3),
-    ]);
+    let merged = merge_headers(vec![Some(headers1), Some(headers2), Some(headers3)]);
 
     // Check merged values
     assert!(merged.values.contains_key("x-custom-2"));
@@ -307,9 +276,11 @@ async fn test_request_timeout() {
     // Server delays response
     Mock::given(method("GET"))
         .and(path("/test"))
-        .respond_with(ResponseTemplate::new(200)
-            .set_delay(Duration::from_secs(2))
-            .set_body_json(json!({"result": "success"})))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_delay(Duration::from_secs(2))
+                .set_body_json(json!({"result": "success"})),
+        )
         .mount(&mock_server)
         .await;
 
@@ -334,19 +305,11 @@ async fn test_anthropic_version_header() {
     let client = AnthropicClient::new(config).unwrap();
 
     let options = RequestOptions::default();
-    let result = client.build_headers(
-        &reqwest::Method::GET,
-        HeaderMap::new(),
-        0,
-        &options
-    );
+    let result = client.build_headers(&reqwest::Method::GET, HeaderMap::new(), 0, &options);
 
     assert!(result.is_ok());
     let headers = result.unwrap();
-    assert_eq!(
-        headers.get("anthropic-version").unwrap(),
-        "2023-06-01"
-    );
+    assert_eq!(headers.get("anthropic-version").unwrap(), "2023-06-01");
 }
 
 #[tokio::test]
@@ -358,17 +321,14 @@ async fn test_browser_access_header() {
     let client = AnthropicClient::new(config).unwrap();
 
     let options = RequestOptions::default();
-    let result = client.build_headers(
-        &reqwest::Method::GET,
-        HeaderMap::new(),
-        0,
-        &options
-    );
+    let result = client.build_headers(&reqwest::Method::GET, HeaderMap::new(), 0, &options);
 
     assert!(result.is_ok());
     let headers = result.unwrap();
     assert_eq!(
-        headers.get("anthropic-dangerous-direct-browser-access").unwrap(),
+        headers
+            .get("anthropic-dangerous-direct-browser-access")
+            .unwrap(),
         "true"
     );
 }
@@ -426,28 +386,28 @@ async fn test_error_types() {
     let err = AnthropicError::from_status(
         reqwest::StatusCode::BAD_REQUEST,
         json!({"message": "Bad request"}),
-        &headers
+        &headers,
     );
     assert!(matches!(err, BadRequest { .. }));
 
     let err = AnthropicError::from_status(
         reqwest::StatusCode::UNAUTHORIZED,
         json!({"message": "Unauthorized"}),
-        &headers
+        &headers,
     );
     assert!(matches!(err, Authentication { .. }));
 
     let err = AnthropicError::from_status(
         reqwest::StatusCode::TOO_MANY_REQUESTS,
         json!({"message": "Rate limited"}),
-        &headers
+        &headers,
     );
     assert!(matches!(err, RateLimit { .. }));
 
     let err = AnthropicError::from_status(
         reqwest::StatusCode::INTERNAL_SERVER_ERROR,
         json!({"message": "Server error"}),
-        &headers
+        &headers,
     );
     assert!(matches!(err, InternalServer { .. }));
 }

@@ -144,7 +144,7 @@ pub struct AppState {
     // Core state
     pub mode: AppMode,
     pub is_running: bool,
-    
+
     // UI state
     pub tabs: Vec<Tab>,
     pub active_tab_index: usize,
@@ -152,26 +152,26 @@ pub struct AppState {
     pub show_command_palette: bool,
     pub file_tree: Option<FileNode>,
     pub selected_file_index: usize,
-    
+
     // Input handling
     pub input_buffer: String,
     pub command_history: Vec<String>,
     pub command_history_index: usize,
-    
+
     // Search
     pub search_query: String,
     pub search_results: Vec<SearchResult>,
     pub selected_search_result: usize,
-    
+
     // Notifications
     pub notifications: Vec<Notification>,
-    
+
     // Clipboard
     pub clipboard: String,
-    
+
     // Settings
     pub settings: Settings,
-    
+
     // Communication channels
     pub event_tx: mpsc::Sender<AppEvent>,
     pub event_rx: mpsc::Receiver<AppEvent>,
@@ -217,22 +217,22 @@ pub enum AppEvent {
     KeyPress(KeyEvent),
     MouseClick(u16, u16),
     Resize(u16, u16),
-    
+
     // File events
     FileOpen(PathBuf),
     FileSave(PathBuf),
     FileClose(String), // tab id
     FileChanged(PathBuf),
-    
+
     // LLM events
     LlmResponse(String),
     LlmError(String),
     LlmStreamChunk(String),
-    
+
     // Command events
     ExecuteCommand(String),
     CommandComplete(String, std::result::Result<String, String>), // Store error as String
-    
+
     // System events
     Notification(Notification),
     UpdateStatus(String),
@@ -242,7 +242,7 @@ pub enum AppEvent {
 impl AppState {
     pub fn new() -> Self {
         let (event_tx, event_rx) = mpsc::channel(100);
-        
+
         let mut state = Self {
             mode: AppMode::Normal,
             is_running: true,
@@ -264,28 +264,28 @@ impl AppState {
             event_tx,
             event_rx,
         };
-        
+
         // Create default chat tab
         state.new_chat_tab();
-        
+
         state
     }
-    
+
     pub fn new_chat_tab(&mut self) {
         let id = format!("chat_{}", self.tabs.len());
         let tab = Tab {
             id: id.clone(),
             title: "Chat".to_string(),
             tab_type: TabType::Chat,
-            content: TabContent::Chat(vec![
-                Message::System("Welcome to Paragen! I'm here to help you with coding.".to_string())
-            ]),
+            content: TabContent::Chat(vec![Message::System(
+                "Welcome to Paragen! I'm here to help you with coding.".to_string(),
+            )]),
             is_dirty: false,
         };
         self.tabs.push(tab);
         self.active_tab_index = self.tabs.len() - 1;
     }
-    
+
     pub fn new_editor_tab(&mut self, file_path: Option<PathBuf>) {
         let id = format!("editor_{}", self.tabs.len());
         let title = if let Some(path) = &file_path {
@@ -296,7 +296,7 @@ impl AppState {
         } else {
             "untitled".to_string()
         };
-        
+
         let tab = Tab {
             id,
             title,
@@ -315,27 +315,27 @@ impl AppState {
         self.tabs.push(tab);
         self.active_tab_index = self.tabs.len() - 1;
     }
-    
+
     pub fn active_tab(&self) -> &TabType {
         &self.tabs[self.active_tab_index].tab_type
     }
-    
+
     pub fn active_tab_mut(&mut self) -> &mut Tab {
         &mut self.tabs[self.active_tab_index]
     }
-    
+
     pub fn show_file_browser(&self) -> bool {
         self.show_file_browser
     }
-    
+
     pub fn show_command_palette(&self) -> bool {
         self.show_command_palette
     }
-    
+
     pub fn current_notification(&self) -> Option<&Notification> {
         self.notifications.first()
     }
-    
+
     pub fn add_notification(&mut self, title: String, message: String, level: NotificationLevel) {
         self.notifications.push(Notification {
             title,
@@ -344,19 +344,19 @@ impl AppState {
             timestamp: Instant::now(),
         });
     }
-    
+
     pub fn mode(&self) -> AppMode {
         self.mode
     }
-    
+
     pub fn set_mode(&mut self, mode: AppMode) {
         self.mode = mode;
     }
-    
+
     pub fn quit(&mut self) {
         self.is_running = false;
     }
-    
+
     pub fn is_running(&self) -> bool {
         self.is_running
     }
@@ -364,56 +364,62 @@ impl AppState {
 
 pub async fn run_app(app_state: Arc<Mutex<AppState>>) -> Result<()> {
     let mut terminal = super::init_terminal()?;
-    
+
     // Start background tasks
     let state_clone = app_state.clone();
     tokio::spawn(async move {
         handle_app_events(state_clone).await;
     });
-    
+
     // Start file watcher
     let state_clone = app_state.clone();
     tokio::spawn(async move {
         watch_files(state_clone).await;
     });
-    
+
     let tick_rate = Duration::from_millis(50);
     let mut last_tick = Instant::now();
-    
+
     loop {
         // Draw UI
         {
             let state = app_state.lock().await;
             terminal.draw(|f| draw_ui(f, &state))?;
-            
+
             if !state.is_running() {
                 break;
             }
         }
-        
+
         // Handle events
         let timeout = tick_rate
             .checked_sub(last_tick.elapsed())
             .unwrap_or_else(|| Duration::from_secs(0));
-            
+
         if event::poll(timeout)? {
             if let Event::Key(key) = event::read()? {
                 let mut state = app_state.lock().await;
-                state.event_tx.send(AppEvent::KeyPress(key)).await.map_err(|_| crate::error::Error::Other("Failed to send event".to_string()))?;
+                state
+                    .event_tx
+                    .send(AppEvent::KeyPress(key))
+                    .await
+                    .map_err(|_| crate::error::Error::Other("Failed to send event".to_string()))?;
             }
         }
-        
+
         // Clean up old notifications
         {
             let mut state = app_state.lock().await;
-            state.notifications.retain(|n| n.timestamp.elapsed() < Duration::from_secs(5));
+            state
+                .notifications
+                .retain(|n| n.timestamp.elapsed() < Duration::from_secs(5));
         }
-        
+
         if last_tick.elapsed() >= tick_rate {
             last_tick = Instant::now();
         }
     }
-    
+
     super::restore_terminal(&mut terminal)?;
     Ok(())
 }
@@ -424,7 +430,7 @@ async fn handle_app_events(app_state: Arc<Mutex<AppState>>) {
             let mut state = app_state.lock().await;
             state.event_rx.recv().await
         };
-        
+
         if let Some(event) = event {
             match event {
                 AppEvent::KeyPress(key) => {
@@ -455,7 +461,7 @@ async fn handle_app_events(app_state: Arc<Mutex<AppState>>) {
 
 async fn handle_key_event(key: KeyEvent, app_state: Arc<Mutex<AppState>>) -> Result<()> {
     let mut state = app_state.lock().await;
-    
+
     // Global shortcuts
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         match key.code {
@@ -482,7 +488,7 @@ async fn handle_key_event(key: KeyEvent, app_state: Arc<Mutex<AppState>>) -> Res
             _ => {}
         }
     }
-    
+
     // Mode-specific handling
     match state.mode {
         AppMode::Normal => handle_normal_mode_key(key, &mut state).await?,
@@ -491,7 +497,7 @@ async fn handle_key_event(key: KeyEvent, app_state: Arc<Mutex<AppState>>) -> Res
         AppMode::Visual => handle_visual_mode_key(key, &mut state).await?,
         AppMode::Search => handle_search_mode_key(key, &mut state).await?,
     }
-    
+
     Ok(())
 }
 
@@ -528,9 +534,15 @@ async fn handle_insert_mode_key(key: KeyEvent, state: &mut AppState) -> Result<(
                         if !state.input_buffer.is_empty() {
                             let input = state.input_buffer.clone();
                             state.input_buffer.clear();
-                            
+
                             // Send message event
-                            state.event_tx.send(AppEvent::LlmResponse(format!("Processing: {}", input))).await.map_err(|_| crate::error::Error::Other("Failed to send event".to_string()))?;
+                            state
+                                .event_tx
+                                .send(AppEvent::LlmResponse(format!("Processing: {}", input)))
+                                .await
+                                .map_err(|_| {
+                                    crate::error::Error::Other("Failed to send event".to_string())
+                                })?;
                         }
                     }
                     TabContent::Editor(editor) => {
@@ -562,7 +574,7 @@ async fn handle_command_mode_key(key: KeyEvent, state: &mut AppState) -> Result<
             state.input_buffer.clear();
             state.command_history.push(command.clone());
             state.set_mode(AppMode::Normal);
-            
+
             // Execute command
             execute_command(&command, state).await?;
         }
@@ -632,7 +644,7 @@ async fn execute_command(command: &str, state: &mut AppState) -> Result<()> {
     if parts.is_empty() {
         return Ok(());
     }
-    
+
     match parts[0] {
         "q" | "quit" => state.quit(),
         "w" | "write" => {
@@ -646,7 +658,11 @@ async fn execute_command(command: &str, state: &mut AppState) -> Result<()> {
         "e" | "edit" => {
             if parts.len() > 1 {
                 let path = PathBuf::from(parts[1]);
-                state.event_tx.send(AppEvent::FileOpen(path)).await.map_err(|_| crate::error::Error::Other("Failed to send event".to_string()))?;
+                state
+                    .event_tx
+                    .send(AppEvent::FileOpen(path))
+                    .await
+                    .map_err(|_| crate::error::Error::Other("Failed to send event".to_string()))?;
             }
         }
         "help" => {
@@ -654,7 +670,8 @@ async fn execute_command(command: &str, state: &mut AppState) -> Result<()> {
             if let Some(tab) = state.tabs.get_mut(state.active_tab_index) {
                 if let TabContent::Chat(messages) = &mut tab.content {
                     messages.push(Message::System(
-                        "Available commands: :q (quit), :w (save), :e <file> (edit), :help".to_string()
+                        "Available commands: :q (quit), :w (save), :e <file> (edit), :help"
+                            .to_string(),
                     ));
                 }
             }
@@ -699,18 +716,16 @@ fn draw_ui(f: &mut Frame, state: &AppState) {
             Constraint::Length(3), // Status bar
         ])
         .split(f.size());
-    
+
     // Draw tab bar
-    let tab_titles: Vec<String> = state.tabs.iter()
-        .map(|t| t.title.clone())
-        .collect();
+    let tab_titles: Vec<String> = state.tabs.iter().map(|t| t.title.clone()).collect();
     let tabs = Tabs::new(tab_titles)
         .block(Block::default().borders(Borders::ALL))
         .select(state.active_tab_index)
         .style(Style::default().fg(Color::White))
         .highlight_style(Style::default().fg(Color::Yellow));
     f.render_widget(tabs, chunks[0]);
-    
+
     // Draw content based on active tab
     if let Some(tab) = state.tabs.get(state.active_tab_index) {
         match &tab.content {
@@ -728,10 +743,10 @@ fn draw_ui(f: &mut Frame, state: &AppState) {
             }
         }
     }
-    
+
     // Draw status bar
     draw_status_bar(f, chunks[2], state);
-    
+
     // Draw overlays
     if let Some(notification) = state.current_notification() {
         draw_notification(f, notification);
@@ -747,7 +762,7 @@ fn draw_chat_content(f: &mut Frame, area: Rect, messages: &[Message], input: &st
             Constraint::Length(3), // Input
         ])
         .split(area);
-    
+
     // Draw messages
     let mut lines = Vec::new();
     for msg in messages {
@@ -760,14 +775,14 @@ fn draw_chat_content(f: &mut Frame, area: Rect, messages: &[Message], input: &st
         };
         lines.push(Line::from(vec![Span::styled(msg.to_string(), style)]));
     }
-    
-    let messages_widget = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title(" Messages "));
+
+    let messages_widget =
+        Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(" Messages "));
     f.render_widget(messages_widget, chunks[0]);
-    
+
     // Draw input
-    let input_widget = Paragraph::new(input)
-        .block(Block::default().borders(Borders::ALL).title(" Input "));
+    let input_widget =
+        Paragraph::new(input).block(Block::default().borders(Borders::ALL).title(" Input "));
     f.render_widget(input_widget, chunks[1]);
 }
 
@@ -788,39 +803,48 @@ fn draw_terminal_content(f: &mut Frame, area: Rect, terminal: &TerminalState) {
 /// Draw debug content
 fn draw_debug_content(f: &mut Frame, area: Rect, debug: &DebugState) {
     let mut lines = Vec::new();
-    lines.push(Line::from(format!("Breakpoints: {}", debug.breakpoints.len())));
-    lines.push(Line::from(format!("Call Stack: {} frames", debug.call_stack.len())));
-    lines.push(Line::from(format!("Variables: {} entries", debug.variables.len())));
-    
-    let content = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title(" Debug "));
+    lines.push(Line::from(format!(
+        "Breakpoints: {}",
+        debug.breakpoints.len()
+    )));
+    lines.push(Line::from(format!(
+        "Call Stack: {} frames",
+        debug.call_stack.len()
+    )));
+    lines.push(Line::from(format!(
+        "Variables: {} entries",
+        debug.variables.len()
+    )));
+
+    let content =
+        Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(" Debug "));
     f.render_widget(content, area);
 }
 
 /// Draw status bar
 fn draw_status_bar(f: &mut Frame, area: Rect, state: &AppState) {
     let mode_str = format!(" Mode: {:?} ", state.mode);
-    let status = Paragraph::new(mode_str)
-        .block(Block::default().borders(Borders::ALL));
+    let status = Paragraph::new(mode_str).block(Block::default().borders(Borders::ALL));
     f.render_widget(status, area);
 }
 
 /// Draw notification overlay
 fn draw_notification(f: &mut Frame, notification: &Notification) {
     let area = centered_rect(60, 20, f.size());
-    
+
     let style = match notification.level {
         NotificationLevel::Info => Style::default().fg(Color::Blue),
         NotificationLevel::Success => Style::default().fg(Color::Green),
         NotificationLevel::Warning => Style::default().fg(Color::Yellow),
         NotificationLevel::Error => Style::default().fg(Color::Red),
     };
-    
-    let content = Paragraph::new(notification.message.as_str())
-        .block(Block::default()
+
+    let content = Paragraph::new(notification.message.as_str()).block(
+        Block::default()
             .borders(Borders::ALL)
             .title(notification.title.as_str())
-            .style(style));
+            .style(style),
+    );
     f.render_widget(content, area);
 }
 

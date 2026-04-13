@@ -3,7 +3,7 @@
 //! This module provides progress bar support matching JavaScript's terminalProgressBarEnabled setting.
 //! It supports both determinate (percentage-based) and indeterminate (spinner) progress bars.
 
-use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::borrow::Cow;
 use std::time::Duration;
 
@@ -34,7 +34,7 @@ impl TerminalProgress {
         bar.set_style(
             ProgressStyle::with_template("{spinner:.cyan} {msg}")
                 .expect("valid template")
-                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
         );
         bar.set_message(message);
         bar.enable_steady_tick(Duration::from_millis(80));
@@ -51,10 +51,10 @@ impl TerminalProgress {
         let bar = ProgressBar::new(length);
         bar.set_style(
             ProgressStyle::with_template(
-                "{msg} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({percent}%)"
+                "{msg} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({percent}%)",
             )
             .expect("valid template")
-            .progress_chars("█▓▒░")
+            .progress_chars("█▓▒░"),
         );
         bar.set_message(message);
 
@@ -69,11 +69,9 @@ impl TerminalProgress {
     pub fn new_percentage(message: impl Into<Cow<'static, str>>) -> Self {
         let bar = ProgressBar::new(100);
         bar.set_style(
-            ProgressStyle::with_template(
-                "{msg} [{bar:40.cyan/blue}] {percent}%"
-            )
-            .expect("valid template")
-            .progress_chars("█▓▒░")
+            ProgressStyle::with_template("{msg} [{bar:40.cyan/blue}] {percent}%")
+                .expect("valid template")
+                .progress_chars("█▓▒░"),
         );
         bar.set_message(message);
 
@@ -225,7 +223,7 @@ impl TerminalProgress {
             self.bar.set_style(
                 ProgressStyle::with_template("{spinner:.cyan} {msg}")
                     .expect("valid template")
-                    .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+                    .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
             );
             self.bar.enable_steady_tick(Duration::from_millis(80));
             self.state = ProgressDisplayState::Indeterminate;
@@ -237,11 +235,9 @@ impl TerminalProgress {
         if self.enabled {
             self.bar.set_length(length);
             self.bar.set_style(
-                ProgressStyle::with_template(
-                    "{msg} [{bar:40.cyan/blue}] {pos}/{len} ({percent}%)"
-                )
-                .expect("valid template")
-                .progress_chars("█▓▒░")
+                ProgressStyle::with_template("{msg} [{bar:40.cyan/blue}] {pos}/{len} ({percent}%)")
+                    .expect("valid template")
+                    .progress_chars("█▓▒░"),
             );
             self.bar.disable_steady_tick();
             self.state = ProgressDisplayState::Determinate;
@@ -279,7 +275,7 @@ impl MultiProgressManager {
             bar.set_style(
                 ProgressStyle::with_template("{spinner:.cyan} {msg}")
                     .expect("valid template")
-                    .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+                    .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
             );
             bar.set_message(message);
             bar.enable_steady_tick(Duration::from_millis(80));
@@ -296,15 +292,19 @@ impl MultiProgressManager {
     }
 
     /// Add a new progress bar with known length
-    pub fn add_progress(&self, length: u64, message: impl Into<Cow<'static, str>>) -> TerminalProgress {
+    pub fn add_progress(
+        &self,
+        length: u64,
+        message: impl Into<Cow<'static, str>>,
+    ) -> TerminalProgress {
         if self.enabled {
             let bar = ProgressBar::new(length);
             bar.set_style(
                 ProgressStyle::with_template(
-                    "{msg} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({percent}%)"
+                    "{msg} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({percent}%)",
                 )
                 .expect("valid template")
-                .progress_chars("█▓▒░")
+                .progress_chars("█▓▒░"),
             );
             bar.set_message(message);
 
@@ -324,11 +324,9 @@ impl MultiProgressManager {
         if self.enabled {
             let bar = ProgressBar::new(100);
             bar.set_style(
-                ProgressStyle::with_template(
-                    "{msg} [{bar:40.cyan/blue}] {percent}%"
-                )
-                .expect("valid template")
-                .progress_chars("█▓▒░")
+                ProgressStyle::with_template("{msg} [{bar:40.cyan/blue}] {percent}%")
+                    .expect("valid template")
+                    .progress_chars("█▓▒░"),
             );
             bar.set_message(message);
 

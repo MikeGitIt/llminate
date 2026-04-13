@@ -67,7 +67,8 @@ Before proceeding with implementation after plan mode:
 #[async_trait]
 impl ToolHandler for EnterPlanModeTool {
     fn description(&self) -> String {
-        "Requests permission to enter plan mode for complex tasks requiring exploration and design".to_string()
+        "Requests permission to enter plan mode for complex tasks requiring exploration and design"
+            .to_string()
     }
 
     fn input_schema(&self) -> Value {
@@ -88,15 +89,18 @@ impl ToolHandler for EnterPlanModeTool {
         "Enter plan mode?".to_string()
     }
 
-    async fn execute(&self, _input: Value, _cancellation_token: Option<CancellationToken>) -> Result<String> {
+    async fn execute(
+        &self,
+        _input: Value,
+        _cancellation_token: Option<CancellationToken>,
+    ) -> Result<String> {
         // Matching JavaScript behavior: return confirmation message
         // The actual mode switching is handled by the UI/state management
         let output = EnterPlanModeOutput {
             message: "Entered plan mode. You should now focus on exploring the codebase and designing an implementation approach.".to_string(),
         };
 
-        let result = serde_json::to_string(&output)
-            .map_err(|e| Error::Serialization(e))?;
+        let result = serde_json::to_string(&output).map_err(|e| Error::Serialization(e))?;
 
         Ok(result)
     }
@@ -131,7 +135,7 @@ Remember: DO NOT write or edit any files yet. This is a read-only exploration an
 pub fn check_context(agent_id: Option<&str>) -> Result<()> {
     if agent_id.is_some() {
         return Err(Error::ToolExecution(
-            "EnterPlanMode tool cannot be used in agent contexts".to_string()
+            "EnterPlanMode tool cannot be used in agent contexts".to_string(),
         ));
     }
     Ok(())
@@ -171,7 +175,10 @@ mod tests {
         assert_eq!(schema["type"], "object");
         assert_eq!(schema["additionalProperties"], false);
         // Empty properties object
-        assert!(schema["properties"].as_object().map(|o| o.is_empty()).unwrap_or(false));
+        assert!(schema["properties"]
+            .as_object()
+            .map(|o| o.is_empty())
+            .unwrap_or(false));
     }
 
     #[test]

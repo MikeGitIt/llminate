@@ -4,7 +4,7 @@ use crate::ai::{
 };
 
 // Re-export types for external use
-pub use crate::ai::client::{StreamEvent, ContentDelta as StreamDelta};
+pub use crate::ai::client::{ContentDelta as StreamDelta, StreamEvent};
 use crate::error::{Error, Result};
 use futures::{Stream, StreamExt};
 use std::pin::Pin;
@@ -22,15 +22,9 @@ pub enum StreamingUpdate {
     /// Text chunk received
     TextChunk(String),
     /// Tool use started
-    ToolUseStart {
-        id: String,
-        name: String,
-    },
+    ToolUseStart { id: String, name: String },
     /// Tool input chunk
-    ToolInputChunk {
-        id: String,
-        chunk: String,
-    },
+    ToolInputChunk { id: String, chunk: String },
     /// Tool use completed
     ToolUseComplete {
         id: String,
@@ -66,19 +60,23 @@ impl StreamingHandler {
     pub fn process_stream(
         stream: Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>,
         mut cancel_rx: Option<mpsc::UnboundedReceiver<()>>,
-    ) -> (mpsc::UnboundedReceiver<StreamingUpdate>, tokio::task::JoinHandle<()>) {
+    ) -> (
+        mpsc::UnboundedReceiver<StreamingUpdate>,
+        tokio::task::JoinHandle<()>,
+    ) {
         let (tx, rx) = mpsc::unbounded_channel();
-        
+
         // Spawn the processing task and return both the receiver and join handle
         let handle = tokio::spawn(async move {
             let mut stream = stream;
-            let mut current_tool_id = None;
+            let mut current_tool_id: Option<String> = None;
+            let mut current_tool_initial_input: Option<serde_json::Value> = None;
             let mut tool_input_buffer = String::new();
             let mut total_usage = TokenUsage {
                 input_tokens: 0,
                 output_tokens: 0,
             };
-            
+
             loop {
                 // Check for cancellation or next stream event
                 let next_event = if let Some(ref mut cancel) = cancel_rx {
@@ -93,112 +91,134 @@ impl StreamingHandler {
                 } else {
                     stream.next().await
                 };
-                
+
                 match next_event {
                     Some(event_result) => {
-                match event_result {
-                    Ok(event) => {
-                        match event {
-                            StreamEvent::MessageStart { message } => {
-                                total_usage.input_tokens = message.usage.input_tokens;
-                            }
-                            StreamEvent::ContentBlockStart { content_block, .. } => {
-                                match content_block {
-                                    ContentBlock::Text { text } => {
-                                        let _ = tx.send(StreamingUpdate::TextChunk(text));
+                        match event_result {
+                            Ok(event) => {
+                                match event {
+                                    StreamEvent::MessageStart { message } => {
+                                        total_usage.input_tokens = message.usage.input_tokens;
                                     }
-                                    ContentBlock::ToolUse { id, name, .. } => {
-                                        current_tool_id = Some(id.clone());
-                                        tool_input_buffer.clear();
+                                    StreamEvent::ContentBlockStart { content_block, .. } => {
+                                        match content_block {
+                                            ContentBlock::Text { text } => {
+                                                let _ = tx.send(StreamingUpdate::TextChunk(text));
+                                            }
+                                            ContentBlock::ToolUse { id, name, input } => {
+                                                current_tool_id = Some(id.clone());
+                                                current_tool_initial_input = Some(input);
+                                                tool_input_buffer.clear();
+                                                let _ = tx.send(StreamingUpdate::ToolUseStart {
+                                                    id,
+                                                    name,
+                                                });
+                                            }
+                                            ContentBlock::Thinking { thinking, .. } => {
+                                                let _ = tx.send(StreamingUpdate::ThinkingStart);
+                                                if !thinking.is_empty() {
+                                                    let _ = tx.send(
+                                                        StreamingUpdate::ThinkingChunk(thinking),
+                                                    );
+                                                }
+                                            }
+                                            ContentBlock::RedactedThinking { .. } => {
+                                                // Redacted thinking is not displayed to user
+                                            }
+                                        }
+                                    }
+                                    StreamEvent::ContentBlockDelta { delta, .. } => {
+                                        match delta {
+                                            ContentDelta::TextDelta { text } => {
+                                                let _ = tx.send(StreamingUpdate::TextChunk(text));
+                                            }
+                                            ContentDelta::InputJsonDelta { partial_json } => {
+                                                if let Some(id) = &current_tool_id {
+                                                    tool_input_buffer.push_str(&partial_json);
+                                                    let _ =
+                                                        tx.send(StreamingUpdate::ToolInputChunk {
+                                                            id: id.clone(),
+                                                            chunk: partial_json,
+                                                        });
+                                                }
+                                            }
+                                            ContentDelta::ThinkingDelta { thinking } => {
+                                                let _ = tx
+                                                    .send(StreamingUpdate::ThinkingChunk(thinking));
+                                            }
+                                            ContentDelta::SignatureDelta { .. } => {
+                                                // Signature is internal, not displayed
+                                            }
+                                        }
+                                    }
+                                    StreamEvent::ContentBlockStop { .. } => {
+                                        if let Some(id) = current_tool_id.take() {
+                                            // If no InputJsonDelta events arrived (e.g. tools
+                                            // with empty schemas like EnterPlanMode), use the
+                                            // initial input from ContentBlockStart directly.
+                                            let input = if tool_input_buffer.is_empty() {
+                                                Ok(current_tool_initial_input
+                                                    .take()
+                                                    .unwrap_or_else(|| serde_json::json!({})))
+                                            } else {
+                                                serde_json::from_str(&tool_input_buffer)
+                                            };
+                                            match input {
+                                                Ok(input) => {
+                                                    let _ =
+                                                        tx.send(StreamingUpdate::ToolUseComplete {
+                                                            id,
+                                                            input,
+                                                        });
+                                                }
+                                                Err(e) => {
+                                                    let _ =
+                                                        tx.send(StreamingUpdate::Error(format!(
+                                                            "Failed to parse tool input: {}",
+                                                            e
+                                                        )));
+                                                }
+                                            }
+                                            tool_input_buffer.clear();
+                                            current_tool_initial_input = None;
+                                        }
+                                    }
+                                    StreamEvent::MessageDelta { usage, .. } => {
+                                        total_usage.output_tokens = usage.output_tokens;
+                                    }
+                                    StreamEvent::MessageStop => {
+                                        let _ = tx.send(StreamingUpdate::MessageComplete {
+                                            stop_reason: None,
+                                            usage: total_usage.clone(),
+                                        });
+                                        break;
+                                    }
+                                    StreamEvent::Ping => {
+                                        // Ignore ping events
+                                    }
+                                    StreamEvent::Error(error) => {
+                                        let _ = tx.send(StreamingUpdate::Error(error));
+                                        break;
+                                    }
+                                    // Handle new variants
+                                    StreamEvent::ContentStart { .. } => {}
+                                    StreamEvent::ContentDelta { .. } => {}
+                                    StreamEvent::ContentStop => {}
+                                    StreamEvent::ToolUseStart { id, name } => {
                                         let _ = tx.send(StreamingUpdate::ToolUseStart { id, name });
                                     }
-                                    ContentBlock::Thinking { thinking, .. } => {
-                                        let _ = tx.send(StreamingUpdate::ThinkingStart);
-                                        if !thinking.is_empty() {
-                                            let _ = tx.send(StreamingUpdate::ThinkingChunk(thinking));
-                                        }
-                                    }
-                                    ContentBlock::RedactedThinking { .. } => {
-                                        // Redacted thinking is not displayed to user
+                                    StreamEvent::ToolUseDelta { .. } => {}
+                                    StreamEvent::ToolUseStop { id, input, .. } => {
+                                        let _ =
+                                            tx.send(StreamingUpdate::ToolUseComplete { id, input });
                                     }
                                 }
                             }
-                            StreamEvent::ContentBlockDelta { delta, .. } => {
-                                match delta {
-                                    ContentDelta::TextDelta { text } => {
-                                        let _ = tx.send(StreamingUpdate::TextChunk(text));
-                                    }
-                                    ContentDelta::InputJsonDelta { partial_json } => {
-                                        if let Some(id) = &current_tool_id {
-                                            tool_input_buffer.push_str(&partial_json);
-                                            let _ = tx.send(StreamingUpdate::ToolInputChunk {
-                                                id: id.clone(),
-                                                chunk: partial_json,
-                                            });
-                                        }
-                                    }
-                                    ContentDelta::ThinkingDelta { thinking } => {
-                                        let _ = tx.send(StreamingUpdate::ThinkingChunk(thinking));
-                                    }
-                                    ContentDelta::SignatureDelta { .. } => {
-                                        // Signature is internal, not displayed
-                                    }
-                                }
-                            }
-                            StreamEvent::ContentBlockStop { .. } => {
-                                if let Some(id) = current_tool_id.take() {
-                                    match serde_json::from_str(&tool_input_buffer) {
-                                        Ok(input) => {
-                                            let _ = tx.send(StreamingUpdate::ToolUseComplete {
-                                                id,
-                                                input,
-                                            });
-                                        }
-                                        Err(e) => {
-                                            let _ = tx.send(StreamingUpdate::Error(format!(
-                                                "Failed to parse tool input: {}",
-                                                e
-                                            )));
-                                        }
-                                    }
-                                    tool_input_buffer.clear();
-                                }
-                            }
-                            StreamEvent::MessageDelta { usage, .. } => {
-                                total_usage.output_tokens = usage.output_tokens;
-                            }
-                            StreamEvent::MessageStop => {
-                                let _ = tx.send(StreamingUpdate::MessageComplete {
-                                    stop_reason: None,
-                                    usage: total_usage.clone(),
-                                });
+                            Err(e) => {
+                                let _ = tx.send(StreamingUpdate::Error(e.to_string()));
                                 break;
-                            }
-                            StreamEvent::Ping => {
-                                // Ignore ping events
-                            }
-                            StreamEvent::Error(error) => {
-                                let _ = tx.send(StreamingUpdate::Error(error));
-                                break;
-                            }
-                            // Handle new variants
-                            StreamEvent::ContentStart { .. } => {}
-                            StreamEvent::ContentDelta { .. } => {}
-                            StreamEvent::ContentStop => {}
-                            StreamEvent::ToolUseStart { id, name } => {
-                                let _ = tx.send(StreamingUpdate::ToolUseStart { id, name });
-                            }
-                            StreamEvent::ToolUseDelta { .. } => {}
-                            StreamEvent::ToolUseStop { id, input, .. } => {
-                                let _ = tx.send(StreamingUpdate::ToolUseComplete { id, input });
                             }
                         }
-                    }
-                    Err(e) => {
-                        let _ = tx.send(StreamingUpdate::Error(e.to_string()));
-                        break;
-                    }
-                }
                     }
                     None => {
                         // Stream ended
@@ -206,14 +226,14 @@ impl StreamingHandler {
                     }
                 }
             }
-            
+
             // Send a final complete message if we haven't already
             let _ = tx.send(StreamingUpdate::MessageComplete {
                 stop_reason: Some("stream_ended".to_string()),
                 usage: total_usage,
             });
         });
-        
+
         (rx, handle)
     }
 }
@@ -239,6 +259,9 @@ pub struct AccumulatedToolUse {
     pub name: String,
     pub input: Option<serde_json::Value>,
     pub input_buffer: String,
+    /// Initial input from ContentBlockStart (used as fallback when no
+    /// InputJsonDelta events arrive, e.g. for empty-schema tools)
+    pub initial_input: serde_json::Value,
 }
 
 impl StreamAccumulator {
@@ -270,6 +293,7 @@ impl StreamAccumulator {
                     name,
                     input: None,
                     input_buffer: String::new(),
+                    initial_input: serde_json::json!({}),
                 });
                 self.current_tool_index = Some(self.tool_uses.len() - 1);
             }
@@ -293,7 +317,10 @@ impl StreamAccumulator {
             StreamingUpdate::ThinkingChunk(chunk) => {
                 self.thinking_buffer.push_str(&chunk);
             }
-            StreamingUpdate::ThinkingComplete { thinking, signature } => {
+            StreamingUpdate::ThinkingComplete {
+                thinking,
+                signature,
+            } => {
                 self.thinking_buffer = thinking;
                 self.thinking_signature = signature;
                 self.is_thinking = false;
@@ -316,33 +343,33 @@ impl StreamAccumulator {
     pub fn get_thinking(&self) -> &str {
         &self.thinking_buffer
     }
-    
+
     /// Get accumulated text
     pub fn get_text(&self) -> &str {
         &self.text_buffer
     }
-    
+
     /// Get tool uses
     pub fn get_tool_uses(&self) -> &[AccumulatedToolUse] {
         &self.tool_uses
     }
-    
+
     /// Get usage
     pub fn get_usage(&self) -> &TokenUsage {
         &self.usage
     }
-    
+
     /// Convert to content parts
     pub fn to_content_parts(self) -> Vec<ContentPart> {
         let mut parts = Vec::new();
-        
+
         if !self.text_buffer.is_empty() {
             parts.push(ContentPart::Text {
                 text: self.text_buffer,
                 citations: None,
             });
         }
-        
+
         for tool in self.tool_uses {
             if let Some(input) = tool.input {
                 parts.push(ContentPart::ToolUse {
@@ -352,7 +379,7 @@ impl StreamAccumulator {
                 });
             }
         }
-        
+
         parts
     }
 }
@@ -373,7 +400,7 @@ where
     pub fn new(callback: F) -> Self {
         Self { callback }
     }
-    
+
     /// Process a stream with the callback
     pub async fn process(
         self,
@@ -381,7 +408,7 @@ where
     ) -> Result<StreamAccumulator> {
         let mut accumulator = StreamAccumulator::new();
         let mut stream = stream;
-        
+
         while let Some(event_result) = stream.next().await {
             match event_result {
                 Ok(event) => {
@@ -393,8 +420,17 @@ where
                         StreamEvent::ContentBlockStart { content_block, .. } => {
                             match content_block {
                                 ContentBlock::Text { text } => StreamingUpdate::TextChunk(text),
-                                ContentBlock::ToolUse { id, name, .. } => {
-                                    StreamingUpdate::ToolUseStart { id, name }
+                                ContentBlock::ToolUse { id, name, input } => {
+                                    let update = StreamingUpdate::ToolUseStart { id, name };
+                                    accumulator.process_update(update.clone());
+                                    // Store initial input from ContentBlockStart
+                                    // so it can be used at ContentBlockStop when
+                                    // no InputJsonDelta events arrive
+                                    if let Some(tool) = accumulator.tool_uses.last_mut() {
+                                        tool.initial_input = input;
+                                    }
+                                    (self.callback)(update);
+                                    continue;
                                 }
                                 ContentBlock::Thinking { thinking, .. } => {
                                     if thinking.is_empty() {
@@ -434,7 +470,14 @@ where
                         StreamEvent::ContentBlockStop { .. } => {
                             if let Some(index) = accumulator.current_tool_index {
                                 if let Some(tool) = accumulator.tool_uses.get_mut(index) {
-                                    match serde_json::from_str(&tool.input_buffer) {
+                                    let input = if tool.input_buffer.is_empty() {
+                                        // No InputJsonDelta events arrived — use the
+                                        // initial input from ContentBlockStart
+                                        Ok(tool.initial_input.clone())
+                                    } else {
+                                        serde_json::from_str(&tool.input_buffer)
+                                    };
+                                    match input {
                                         Ok(input) => StreamingUpdate::ToolUseComplete {
                                             id: tool.id.clone(),
                                             input,
@@ -481,7 +524,7 @@ where
                             StreamingUpdate::ToolUseComplete { id, input }
                         }
                     };
-                    
+
                     accumulator.process_update(update.clone());
                     (self.callback)(update);
                 }
@@ -492,7 +535,7 @@ where
                 }
             }
         }
-        
+
         Ok(accumulator)
     }
 }

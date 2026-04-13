@@ -1,11 +1,3 @@
-/// Permission system for tool execution
-/// Based on JavaScript implementation
-
-use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use serde::{Deserialize, Serialize};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -14,6 +6,13 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
 };
+use serde::{Deserialize, Serialize};
+/// Permission system for tool execution
+/// Based on JavaScript implementation
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// Permission modes (from JS line 351446)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -90,15 +89,15 @@ impl Default for PermissionContext {
     fn default() -> Self {
         // Get home directory and common development directories
         let mut allowed_directories = HashSet::new();
-        
+
         // Add current working directory
         if let Ok(cwd) = std::env::current_dir() {
             allowed_directories.insert(cwd);
         }
-        
+
         // Add temp directory
         allowed_directories.insert(PathBuf::from("/tmp"));
-        
+
         Self {
             mode: PermissionMode::Default,
             allowed_commands: vec![
@@ -140,7 +139,7 @@ impl PermissionContext {
             .or_insert_with(Vec::new)
             .push(pattern.to_string());
     }
-    
+
     /// Add a rule to always deny certain commands for a tool
     pub fn add_always_deny_rule(&mut self, tool_name: &str, pattern: &str) {
         self.always_deny_rules
@@ -148,13 +147,13 @@ impl PermissionContext {
             .or_insert_with(Vec::new)
             .push(pattern.to_string());
     }
-    
+
     /// Check if a command is allowed to run
     pub fn check_command(&mut self, command: &str, tool_name: &str) -> PermissionResultStruct {
-        
         // In bypass mode, everything is allowed
         if self.mode == PermissionMode::BypassPermissions && self.bypass_permissions_accepted {
-            self.permission_history.push((command.to_string(), PermissionBehavior::Allow));
+            self.permission_history
+                .push((command.to_string(), PermissionBehavior::Allow));
             return PermissionResultStruct {
                 behavior: PermissionBehavior::Allow,
                 message: None,
@@ -166,10 +165,14 @@ impl PermissionContext {
         if let Some(deny_patterns) = self.always_deny_rules.get(tool_name) {
             for pattern in deny_patterns {
                 if command.contains(pattern) || pattern == "*" {
-                    self.permission_history.push((command.to_string(), PermissionBehavior::Deny));
+                    self.permission_history
+                        .push((command.to_string(), PermissionBehavior::Deny));
                     return PermissionResultStruct {
                         behavior: PermissionBehavior::Deny,
-                        message: Some(format!("Permission to run '{}' has been permanently denied.", command)),
+                        message: Some(format!(
+                            "Permission to run '{}' has been permanently denied.",
+                            command
+                        )),
                         allowed_tools: Vec::new(),
                     };
                 }
@@ -179,7 +182,8 @@ impl PermissionContext {
         // Check if command is explicitly denied
         for denied_prefix in &self.denied_commands {
             if command.starts_with(denied_prefix) {
-                self.permission_history.push((command.to_string(), PermissionBehavior::Deny));
+                self.permission_history
+                    .push((command.to_string(), PermissionBehavior::Deny));
                 return PermissionResultStruct {
                     behavior: PermissionBehavior::Deny,
                     message: Some(format!("Permission to run '{}' has been denied.", command)),
@@ -192,7 +196,8 @@ impl PermissionContext {
         if let Some(allow_patterns) = self.always_allow_rules.get(tool_name) {
             for pattern in allow_patterns {
                 if command.starts_with(pattern) || pattern == "*" {
-                    self.permission_history.push((command.to_string(), PermissionBehavior::Allow));
+                    self.permission_history
+                        .push((command.to_string(), PermissionBehavior::Allow));
                     return PermissionResultStruct {
                         behavior: PermissionBehavior::Allow,
                         message: None,
@@ -205,7 +210,8 @@ impl PermissionContext {
         // Check if command is explicitly allowed
         for allowed_prefix in &self.allowed_commands {
             if command.starts_with(allowed_prefix) {
-                self.permission_history.push((command.to_string(), PermissionBehavior::Allow));
+                self.permission_history
+                    .push((command.to_string(), PermissionBehavior::Allow));
                 return PermissionResultStruct {
                     behavior: PermissionBehavior::Allow,
                     message: None,
@@ -216,7 +222,8 @@ impl PermissionContext {
 
         // Check for sandbox mode (read-only commands)
         if is_safe_readonly_command(command) {
-            self.permission_history.push((command.to_string(), PermissionBehavior::Allow));
+            self.permission_history
+                .push((command.to_string(), PermissionBehavior::Allow));
             return PermissionResultStruct {
                 behavior: PermissionBehavior::Allow,
                 message: None,
@@ -235,25 +242,37 @@ impl PermissionContext {
 
         PermissionResultStruct {
             behavior: PermissionBehavior::Ask,
-            message: Some(format!(
-                "Claude requested permission to run: {}", 
-                command
-            )),
+            message: Some(format!("Claude requested permission to run: {}", command)),
             allowed_tools: Vec::new(),
         }
     }
 
     /// Check if a file operation is allowed
-    pub fn check_file_operation(&mut self, path: &Path, operation: FileOperation, tool_name: &str) -> PermissionResultStruct {
-        tracing::debug!("DEBUG: Permission check for {} operation on {} by tool {}", 
-            operation.as_str(), path.display(), tool_name);
-        tracing::debug!("DEBUG: Permission mode: {:?}, allowed directories: {:?}", 
-            self.mode, self.allowed_directories);
-            
+    pub fn check_file_operation(
+        &mut self,
+        path: &Path,
+        operation: FileOperation,
+        tool_name: &str,
+    ) -> PermissionResultStruct {
+        tracing::debug!(
+            "DEBUG: Permission check for {} operation on {} by tool {}",
+            operation.as_str(),
+            path.display(),
+            tool_name
+        );
+        tracing::debug!(
+            "DEBUG: Permission mode: {:?}, allowed directories: {:?}",
+            self.mode,
+            self.allowed_directories
+        );
+
         // In bypass mode, everything is allowed
         if self.mode == PermissionMode::BypassPermissions && self.bypass_permissions_accepted {
             tracing::debug!("DEBUG: Permission granted - bypass mode enabled");
-            self.permission_history.push((format!("{:?} {}", operation, path.display()), PermissionBehavior::Allow));
+            self.permission_history.push((
+                format!("{:?} {}", operation, path.display()),
+                PermissionBehavior::Allow,
+            ));
             return PermissionResultStruct {
                 behavior: PermissionBehavior::Allow,
                 message: None,
@@ -264,7 +283,10 @@ impl PermissionContext {
         // For edit operations in AcceptEdits mode
         if self.mode == PermissionMode::AcceptEdits && operation == FileOperation::Edit {
             tracing::debug!("DEBUG: Permission granted - accept edits mode for edit operation");
-            self.permission_history.push((format!("Edit {}", path.display()), PermissionBehavior::Allow));
+            self.permission_history.push((
+                format!("Edit {}", path.display()),
+                PermissionBehavior::Allow,
+            ));
             return PermissionResultStruct {
                 behavior: PermissionBehavior::Allow,
                 message: None,
@@ -272,12 +294,60 @@ impl PermissionContext {
             };
         }
 
+        // Check if this is a sensitive file — these always require permission
+        // even if they're in an allowed directory (matches JavaScript behavior)
+        if let Some(filename) = path.file_name() {
+            let name = filename.to_string_lossy();
+            if name.starts_with(".env")
+                || name.contains("secret")
+                || name.contains("password")
+                || name.contains("credential")
+                || (name.contains("key")
+                    && !name.ends_with(".rs")
+                    && !name.ends_with(".ts")
+                    && !name.ends_with(".js"))
+            {
+                tracing::debug!(
+                    "DEBUG: Sensitive file detected: {}, requiring permission",
+                    path.display()
+                );
+                let op_str = match operation {
+                    FileOperation::Read => "read from",
+                    FileOperation::Write => "write to",
+                    FileOperation::Edit => "edit",
+                    FileOperation::Delete => "delete",
+                };
+                self.pending_request = Some(PermissionRequest {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    tool_name: tool_name.to_string(),
+                    action: format!("{} sensitive file", op_str),
+                    details: path.display().to_string(),
+                    timestamp: std::time::Instant::now(),
+                });
+                return PermissionResultStruct {
+                    behavior: PermissionBehavior::Ask,
+                    message: Some(format!(
+                        "Claude requested permission to {} {} (sensitive file)",
+                        op_str,
+                        path.display()
+                    )),
+                    allowed_tools: Vec::new(),
+                };
+            }
+        }
+
         // Check if path is in allowed directories
         for allowed_dir in &self.allowed_directories {
             if path.starts_with(allowed_dir) || path == allowed_dir {
-                tracing::debug!("DEBUG: Permission granted - path {} is within allowed directory {}", 
-                    path.display(), allowed_dir.display());
-                self.permission_history.push((format!("{:?} {}", operation, path.display()), PermissionBehavior::Allow));
+                tracing::debug!(
+                    "DEBUG: Permission granted - path {} is within allowed directory {}",
+                    path.display(),
+                    allowed_dir.display()
+                );
+                self.permission_history.push((
+                    format!("{:?} {}", operation, path.display()),
+                    PermissionBehavior::Allow,
+                ));
                 return PermissionResultStruct {
                     behavior: PermissionBehavior::Allow,
                     message: None,
@@ -288,8 +358,14 @@ impl PermissionContext {
 
         // Check if it's a read operation on a safe file
         if operation == FileOperation::Read && is_safe_file_to_read(path) {
-            tracing::debug!("DEBUG: Permission granted - safe file read for {}", path.display());
-            self.permission_history.push((format!("Read {}", path.display()), PermissionBehavior::Allow));
+            tracing::debug!(
+                "DEBUG: Permission granted - safe file read for {}",
+                path.display()
+            );
+            self.permission_history.push((
+                format!("Read {}", path.display()),
+                PermissionBehavior::Allow,
+            ));
             return PermissionResultStruct {
                 behavior: PermissionBehavior::Allow,
                 message: None,
@@ -316,7 +392,7 @@ impl PermissionContext {
         PermissionResultStruct {
             behavior: PermissionBehavior::Ask,
             message: Some(format!(
-                "Claude requested permission to {} {}", 
+                "Claude requested permission to {} {}",
                 op_str,
                 path.display()
             )),
@@ -325,10 +401,14 @@ impl PermissionContext {
     }
 
     /// Process user's permission decision
-    pub fn process_permission_decision(&mut self, decision: PermissionBehavior) -> PermissionResultStruct {
+    pub fn process_permission_decision(
+        &mut self,
+        decision: PermissionBehavior,
+    ) -> PermissionResultStruct {
         if let Some(request) = &self.pending_request {
             // Record the decision
-            self.permission_history.push((request.details.clone(), decision.clone()));
+            self.permission_history
+                .push((request.details.clone(), decision.clone()));
 
             // Handle "always" and "never" decisions
             match decision {
@@ -338,10 +418,13 @@ impl PermissionContext {
                         .entry(request.tool_name.clone())
                         .or_insert_with(Vec::new)
                         .push(extract_pattern(&request.details));
-                    
+
                     return PermissionResultStruct {
                         behavior: PermissionBehavior::Allow,
-                        message: Some(format!("Always allowing {} for {}", request.action, request.tool_name)),
+                        message: Some(format!(
+                            "Always allowing {} for {}",
+                            request.action, request.tool_name
+                        )),
                         allowed_tools: vec![request.tool_name.clone()],
                     };
                 }
@@ -351,10 +434,13 @@ impl PermissionContext {
                         .entry(request.tool_name.clone())
                         .or_insert_with(Vec::new)
                         .push(extract_pattern(&request.details));
-                    
+
                     return PermissionResultStruct {
                         behavior: PermissionBehavior::Deny,
-                        message: Some(format!("Never allowing {} for {}", request.action, request.tool_name)),
+                        message: Some(format!(
+                            "Never allowing {} for {}",
+                            request.action, request.tool_name
+                        )),
                         allowed_tools: Vec::new(),
                     };
                 }
@@ -428,11 +514,11 @@ impl FileOperation {
             FileOperation::Delete => "Delete".to_string(),
         }
     }
-    
+
     fn as_str(&self) -> &'static str {
         match self {
             FileOperation::Read => "read",
-            FileOperation::Write => "write", 
+            FileOperation::Write => "write",
             FileOperation::Edit => "edit",
             FileOperation::Delete => "delete",
         }
@@ -442,12 +528,11 @@ impl FileOperation {
 /// Check if a command is safe to run without permission
 fn is_safe_readonly_command(command: &str) -> bool {
     let safe_commands = [
-        "ls", "pwd", "echo", "date", "whoami", "hostname", 
-        "uname", "which", "type", "env", "printenv", "locale",
-        "id", "groups", "ps", "top", "df", "du", "free",
-        "uptime", "w", "who", "last", "history", "help"
+        "ls", "pwd", "echo", "date", "whoami", "hostname", "uname", "which", "type", "env",
+        "printenv", "locale", "id", "groups", "ps", "top", "df", "du", "free", "uptime", "w",
+        "who", "last", "history", "help",
     ];
-    
+
     // Check if command starts with any safe command
     let cmd_parts: Vec<&str> = command.split_whitespace().collect();
     if let Some(base_cmd) = cmd_parts.first() {
@@ -455,7 +540,7 @@ fn is_safe_readonly_command(command: &str) -> bool {
         let cmd_name = base_cmd.split('/').last().unwrap_or(base_cmd);
         return safe_commands.contains(&cmd_name);
     }
-    
+
     false
 }
 
@@ -467,27 +552,33 @@ fn is_safe_file_to_read(path: &Path) -> bool {
             // But not sensitive files even in current directory
             if let Some(filename) = path.file_name() {
                 let name = filename.to_string_lossy();
-                if name.starts_with(".env") || 
-                   name.contains("secret") || 
-                   name.contains("password") ||
-                   name.contains("key") ||
-                   name == ".git" {
+                if name.starts_with(".env")
+                    || name.contains("secret")
+                    || name.contains("password")
+                    || name.contains("key")
+                    || name == ".git"
+                {
                     return false;
                 }
             }
             return true;
         }
     }
-    
+
     // Allow reading common documentation files
     if let Some(ext) = path.extension() {
         let ext_str = ext.to_string_lossy();
-        if ext_str == "md" || ext_str == "txt" || ext_str == "json" || 
-           ext_str == "toml" || ext_str == "yaml" || ext_str == "yml" {
+        if ext_str == "md"
+            || ext_str == "txt"
+            || ext_str == "json"
+            || ext_str == "toml"
+            || ext_str == "yaml"
+            || ext_str == "yml"
+        {
             return true;
         }
     }
-    
+
     false
 }
 
@@ -500,12 +591,12 @@ fn extract_pattern(details: &str) -> String {
             return cmd.to_string();
         }
     }
-    
+
     // For paths, use the directory
     if let Some(dir) = Path::new(details).parent() {
         return dir.display().to_string();
     }
-    
+
     details.to_string()
 }
 
@@ -548,19 +639,21 @@ impl PermissionDialog {
     /// Generate context-specific options based on the request (like JavaScript AF function)
     fn generate_options(&self, request: &PermissionRequest) -> Vec<PermissionOption> {
         let mut options = Vec::new();
-        
+
         // Option 1: Yes (allow once)
         options.push(PermissionOption {
             label: "Yes".to_string(),
             value: PermissionBehavior::Allow,
             key_hint: Some("1".to_string()),
         });
-        
+
         // Option 2: Context-specific "don't ask again" option
         let dont_ask_label = match request.tool_name.as_str() {
             "Bash" => {
                 // For Bash commands, extract the base command
-                let base_cmd = request.details.split_whitespace()
+                let base_cmd = request
+                    .details
+                    .split_whitespace()
                     .next()
                     .unwrap_or(&request.details);
                 format!("Yes, allow all '{}' commands this session", base_cmd)
@@ -575,27 +668,30 @@ impl PermissionDialog {
             }
             "Read" => {
                 if let Some(dir) = std::path::Path::new(&request.details).parent() {
-                    format!("Yes, allow reading all files in {} this session", dir.display())
+                    format!(
+                        "Yes, allow reading all files in {} this session",
+                        dir.display()
+                    )
                 } else {
                     "Yes, allow all file reads this session".to_string()
                 }
             }
             _ => format!("Yes, and don't ask again this session"),
         };
-        
+
         options.push(PermissionOption {
             label: dont_ask_label,
             value: PermissionBehavior::AlwaysAllow,
             key_hint: Some("2 or shift+tab".to_string()),
         });
-        
+
         // Option 3: No, and provide feedback
         options.push(PermissionOption {
             label: "No, and tell Claude what to do differently".to_string(),
             value: PermissionBehavior::Wait,
             key_hint: Some("3 or esc".to_string()),
         });
-        
+
         options
     }
 
@@ -694,7 +790,7 @@ impl PermissionDialog {
 
         // Create the dialog content
         let title = format!(" 🔒 Permission Request - {} ", request.tool_name);
-        
+
         let mut lines = vec![
             Line::from(""),
             Line::from(vec![
@@ -702,12 +798,11 @@ impl PermissionDialog {
                 Span::styled(&request.action, Style::default().fg(Color::Yellow)),
             ]),
             Line::from(""),
-            Line::from(vec![
-                Span::raw("Details: "),
-            ]),
-            Line::from(vec![
-                Span::styled(&request.details, Style::default().fg(Color::Cyan)),
-            ]),
+            Line::from(vec![Span::raw("Details: ")]),
+            Line::from(vec![Span::styled(
+                &request.details,
+                Style::default().fg(Color::Cyan),
+            )]),
             Line::from(""),
             Line::from("─".repeat(50)),
             Line::from(""),
@@ -720,14 +815,14 @@ impl PermissionDialog {
             } else {
                 Style::default()
             };
-            
+
             // Include key hint if available
             let label_text = if let Some(ref hint) = option.key_hint {
                 format!("[{}] {}", hint, option.label)
             } else {
                 format!("[{}] {}", idx + 1, option.label)
             };
-            
+
             lines.push(Line::from(vec![
                 Span::raw("  "),
                 Span::styled(label_text, style),
@@ -781,14 +876,14 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 }
 
 /// Global permission context (shared across the application)
-pub static PERMISSION_CONTEXT: once_cell::sync::Lazy<Arc<Mutex<PermissionContext>>> = 
+pub static PERMISSION_CONTEXT: once_cell::sync::Lazy<Arc<Mutex<PermissionContext>>> =
     once_cell::sync::Lazy::new(|| Arc::new(Mutex::new(PermissionContext::default())));
 
 /// Simple async function to check command permission for streaming
 pub async fn check_command_permission(command: &str) -> PermissionResult {
     let mut ctx = PERMISSION_CONTEXT.lock().await;
     let result = ctx.check_command(command, "Bash");
-    
+
     match result.behavior {
         PermissionBehavior::Allow | PermissionBehavior::AlwaysAllow => PermissionResult::Allow,
         PermissionBehavior::Deny | PermissionBehavior::Never => PermissionResult::Deny,
@@ -804,16 +899,16 @@ mod tests {
     #[test]
     fn test_command_permissions() {
         let mut ctx = PermissionContext::default();
-        
+
         // Test safe command - should be allowed
         let result = ctx.check_command("ls -la", "Bash");
         assert_eq!(result.behavior, PermissionBehavior::Allow);
-        
+
         // Test dangerous command - should be denied
         ctx.deny_command("rm -rf".to_string());
         let result = ctx.check_command("rm -rf /home", "Bash");
         assert_eq!(result.behavior, PermissionBehavior::Deny);
-        
+
         // Test unknown command - should ask
         let result = ctx.check_command("some_unknown_command", "Bash");
         assert_eq!(result.behavior, PermissionBehavior::Ask);
@@ -824,7 +919,7 @@ mod tests {
         let mut ctx = PermissionContext::default();
         ctx.mode = PermissionMode::BypassPermissions;
         ctx.bypass_permissions_accepted = true;
-        
+
         // Everything should be allowed
         let result = ctx.check_command("rm -rf /", "Bash");
         assert_eq!(result.behavior, PermissionBehavior::Allow);
@@ -833,41 +928,40 @@ mod tests {
     #[test]
     fn test_file_permissions() {
         let mut ctx = PermissionContext::default();
-        
+
         // Test file in current directory - should be allowed for read
         if let Ok(cwd) = std::env::current_dir() {
             let test_file = cwd.join("test.txt");
             let result = ctx.check_file_operation(&test_file, FileOperation::Read, "Read");
             assert_eq!(result.behavior, PermissionBehavior::Allow);
         }
-        
+
         // Test sensitive file - should ask even in current directory
         if let Ok(cwd) = std::env::current_dir() {
             let env_file = cwd.join(".env");
             let result = ctx.check_file_operation(&env_file, FileOperation::Read, "Read");
             assert_eq!(result.behavior, PermissionBehavior::Ask);
         }
-        
+
         // Test system file - should ask
-        let result = ctx.check_file_operation(
-            &PathBuf::from("/etc/passwd"),
-            FileOperation::Write,
-            "Write"
-        );
+        let result =
+            ctx.check_file_operation(&PathBuf::from("/etc/passwd"), FileOperation::Write, "Write");
         assert_eq!(result.behavior, PermissionBehavior::Ask);
     }
 
     #[test]
     fn test_always_rules() {
         let mut ctx = PermissionContext::default();
-        
+
         // Add always allow rule
-        ctx.always_allow_rules.insert("Bash".to_string(), vec!["npm".to_string()]);
+        ctx.always_allow_rules
+            .insert("Bash".to_string(), vec!["npm".to_string()]);
         let result = ctx.check_command("npm install", "Bash");
         assert_eq!(result.behavior, PermissionBehavior::Allow);
-        
+
         // Add always deny rule
-        ctx.always_deny_rules.insert("Bash".to_string(), vec!["curl".to_string()]);
+        ctx.always_deny_rules
+            .insert("Bash".to_string(), vec!["curl".to_string()]);
         let result = ctx.check_command("curl http://example.com", "Bash");
         assert_eq!(result.behavior, PermissionBehavior::Deny);
     }

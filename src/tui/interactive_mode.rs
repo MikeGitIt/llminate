@@ -1,24 +1,26 @@
 use crate::error::Result;
 use crate::mcp;
 use crate::telemetry;
-use crate::tui::{
-    self, create_event_handler, init_terminal, restore_terminal, TuiEvent,
+use crate::tui::components::{
+    ChatView, ProgressIndicator, StatusBar, ToolPanel, UiMessage as Message,
 };
-use crate::tui::components::{ChatView, ProgressIndicator, StatusBar, ToolPanel, UiMessage as Message};
 use crate::tui::state::AppState;
+use crate::tui::{self, create_event_handler, init_terminal, restore_terminal, TuiEvent};
+use crossterm::event::{
+    DisableBracketedPaste, EnableBracketedPaste, KeyCode, KeyEvent, KeyModifiers,
+};
+use crossterm::execute;
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame, Terminal,
 };
 use std::io;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
-use crossterm::event::{EnableBracketedPaste, DisableBracketedPaste, KeyEvent, KeyCode, KeyModifiers};
-use crossterm::execute;
 use tui_textarea::{Input, Key};
 
 /// Options for interactive mode
@@ -41,61 +43,55 @@ pub struct InteractiveOptions {
 pub async fn run(options: InteractiveOptions) -> Result<()> {
     // Initialize terminal
     let mut terminal = init_terminal()?;
-    
+
     // Enable bracketed paste mode
-    execute!(
-        terminal.backend_mut(),
-        EnableBracketedPaste
-    )?;
-    
+    execute!(terminal.backend_mut(), EnableBracketedPaste)?;
+
     // Create event channel
     let (tx, mut rx) = create_event_handler();
-    
+
     // Start event loop in background
     let event_tx = tx.clone();
     tokio::spawn(async move {
         tui::run_event_loop(event_tx).await;
     });
-    
+
     // Initialize app state
     let mut app_state = AppState::new(options.clone());
-    
+
     // Set the event sender for background tasks
     app_state.event_tx = Some(tx.clone());
-    
+
     // Start the persistent agent loop for the entire session
     app_state.start_agent_loop();
-    
+
     // Load MCP servers if configured
     if let Some(mcp_config) = &options.mcp_config {
         load_mcp_servers(&mut app_state, mcp_config).await?;
     }
-    
+
     // Handle continue/resume
     if options.continue_conversation {
         app_state.continue_last_conversation().await?;
     } else if let Some(session_id) = &options.resume_session_id {
         app_state.resume_conversation(session_id).await?;
     }
-    
+
     // Track telemetry
     telemetry::track("interactive_session_start", None::<serde_json::Value>).await;
-    
+
     // Main loop
     let result = run_app(&mut terminal, &mut app_state, &mut rx).await;
-    
+
     // Disable bracketed paste mode
-    execute!(
-        terminal.backend_mut(),
-        DisableBracketedPaste
-    )?;
-    
+    execute!(terminal.backend_mut(), DisableBracketedPaste)?;
+
     // Restore terminal
     restore_terminal(&mut terminal)?;
-    
+
     // Track telemetry
     telemetry::track("interactive_session_end", None::<serde_json::Value>).await;
-    
+
     result
 }
 
@@ -106,14 +102,14 @@ async fn run_app(
     rx: &mut mpsc::UnboundedReceiver<TuiEvent>,
 ) -> Result<()> {
     let mut needs_redraw = true;
-    
+
     loop {
         // Only draw when needed
         if needs_redraw {
             terminal.draw(|f| draw_ui(f, app_state))?;
             needs_redraw = false;
         }
-        
+
         // Handle events
         if let Some(event) = rx.recv().await {
             match event {
@@ -127,7 +123,7 @@ async fn run_app(
                     needs_redraw = true;
                 }
                 TuiEvent::Mouse(mouse) => {
-                    use crossterm::event::{MouseEventKind, MouseButton};
+                    use crossterm::event::{MouseButton, MouseEventKind};
                     match mouse.kind {
                         MouseEventKind::ScrollUp => {
                             app_state.scroll_up(3); // Scroll 3 lines at a time
@@ -162,7 +158,9 @@ async fn run_app(
                             if app_state.chat_is_selecting {
                                 app_state.chat_is_selecting = false;
                                 // Extract selected text from rendered lines
-                                if let (Some(start), Some(end)) = (app_state.chat_selection_start, app_state.chat_selection_end) {
+                                if let (Some(start), Some(end)) =
+                                    (app_state.chat_selection_start, app_state.chat_selection_end)
+                                {
                                     let selected = app_state.extract_selected_text(start, end);
                                     if !selected.is_empty() {
                                         app_state.chat_selected_text = Some(selected);
@@ -177,48 +175,57 @@ async fn run_app(
                 TuiEvent::Paste(text) => {
                     if app_state.input_mode {
                         // Handle paste like JavaScript implementation
-                        const MAX_TEXT_LENGTH: usize = 10_000;  // num90 from JS
-                        const TRUNCATE_KEEP: usize = 500;       // num91/2 from JS
-                        
+                        const MAX_TEXT_LENGTH: usize = 10_000; // num90 from JS
+                        const TRUNCATE_KEEP: usize = 500; // num91/2 from JS
+
                         // Count lines in the ORIGINAL text, not processed text
                         let original_line_count = text.lines().count();
-                        
+
                         let processed_text = if text.len() > MAX_TEXT_LENGTH {
                             // Truncate large text keeping first 500 and last 500 chars
                             let start = &text[..TRUNCATE_KEEP];
                             let end = &text[text.len() - TRUNCATE_KEEP..];
-                            
+
                             // Get the middle section for line counting
                             let middle = &text[TRUNCATE_KEEP..text.len() - TRUNCATE_KEEP];
                             let middle_lines = middle.lines().count();
-                            
+
                             // Get next paste ID for truncation placeholder
                             let paste_id = app_state.next_paste_id;
                             app_state.next_paste_id += 1;
-                            
+
                             // Store the truncated middle content
-                            app_state.pasted_contents.insert(paste_id, middle.to_string());
-                            
+                            app_state
+                                .pasted_contents
+                                .insert(paste_id, middle.to_string());
+
                             // Create truncated text with placeholder
-                            let truncation_placeholder = format!("[...Truncated text #{} +{} lines...]", paste_id, middle_lines);
+                            let truncation_placeholder = format!(
+                                "[...Truncated text #{} +{} lines...]",
+                                paste_id, middle_lines
+                            );
                             format!("{}{}{}", start, truncation_placeholder, end)
                         } else {
                             text.clone()
                         };
-                        
+
                         // Check if paste is large enough to use placeholder
-                        if original_line_count > 3 || text.len() > 800 {  // Threshold from JS (num93)
+                        if original_line_count > 3 || text.len() > 800 {
+                            // Threshold from JS (num93)
                             // Get next paste ID
                             let paste_id = app_state.next_paste_id;
                             app_state.next_paste_id += 1;
-                            
+
                             // Store full content in pasted_contents - store the ORIGINAL text, not truncated
                             app_state.pasted_contents.insert(paste_id, text.clone());
-                            
+
                             // Show placeholder in input box - show the TOTAL line count
-                            let placeholder = format!("[Pasted text #{} +{} lines]", paste_id, original_line_count);
+                            let placeholder = format!(
+                                "[Pasted text #{} +{} lines]",
+                                paste_id, original_line_count
+                            );
                             app_state.input_textarea.insert_str(&placeholder);
-                            
+
                             // Don't show preview immediately - wait for submission
                         } else {
                             // Small paste - insert directly
@@ -254,27 +261,39 @@ async fn run_app(
                     // Force a redraw for streaming updates
                     needs_redraw = true;
                 }
-                TuiEvent::PermissionRequired { tool_name, command, tool_use_id, input, responder } => {
+                TuiEvent::PermissionRequired {
+                    tool_name,
+                    command,
+                    tool_use_id,
+                    input,
+                    responder,
+                } => {
                     // Add to the queue of pending permissions
-                    app_state.pending_permissions.push_back(crate::tui::state::PendingPermission {
-                        tool_name: tool_name.clone(),
-                        command: command.clone(),
-                        tool_use_id,
-                        input,
-                        responder,
-                    });
-                    
-                    // Only show dialog if this is the first permission in the queue (no dialog already visible)
-                    if app_state.pending_permissions.len() == 1 && !app_state.permission_dialog.visible {
-                        app_state.permission_dialog.show(crate::permissions::PermissionRequest {
-                            id: uuid::Uuid::new_v4().to_string(),
-                            tool_name,
-                            action: "execute".to_string(),
-                            details: command,
-                            timestamp: std::time::Instant::now(),
+                    app_state
+                        .pending_permissions
+                        .push_back(crate::tui::state::PendingPermission {
+                            tool_name: tool_name.clone(),
+                            command: command.clone(),
+                            tool_use_id,
+                            input,
+                            responder,
                         });
+
+                    // Only show dialog if this is the first permission in the queue (no dialog already visible)
+                    if app_state.pending_permissions.len() == 1
+                        && !app_state.permission_dialog.visible
+                    {
+                        app_state
+                            .permission_dialog
+                            .show(crate::permissions::PermissionRequest {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                tool_name,
+                                action: "execute".to_string(),
+                                details: command,
+                                timestamp: std::time::Instant::now(),
+                            });
                     }
-                    
+
                     needs_redraw = true;
                 }
                 TuiEvent::ProcessingComplete => {
@@ -309,14 +328,44 @@ async fn run_app(
                 TuiEvent::SetStreamCanceller(canceller) => {
                     app_state.stream_cancel_tx = canceller;
                 }
-                TuiEvent::ToolExecutionComplete { tool_use_id, result } => {
+                TuiEvent::AskUserQuestionRequired {
+                    tool_use_id: _,
+                    questions,
+                    responder,
+                } => {
+                    // Store questions and responder in app state, show dialog
+                    app_state.show_question_dialog = true;
+                    app_state.question_dialog_questions = questions;
+                    app_state.question_dialog_current_question = 0;
+                    app_state.question_dialog_selected_option = 0;
+                    app_state.question_dialog_answers = std::collections::HashMap::new();
+                    app_state.question_dialog_other_input = None;
+                    app_state.question_dialog_in_other_mode = false;
+                    app_state.question_dialog_multi_selected = std::collections::HashSet::new();
+                    app_state.question_dialog_responder = Some(responder);
+                    needs_redraw = true;
+                }
+                TuiEvent::PlanModeChanged { enabled } => {
+                    app_state.plan_mode = enabled;
+                    if let Some(flag) = &app_state.plan_mode_flag {
+                        flag.store(enabled, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    needs_redraw = true;
+                }
+                TuiEvent::ToolExecutionComplete {
+                    tool_use_id,
+                    result,
+                } => {
                     // Handle tool execution completion
                     app_state.is_processing = false;
-                    
+
                     match result {
                         Ok(tool_result) => {
                             // Display the actual tool output to the user
-                            if let crate::ai::ContentPart::ToolResult { content, is_error, .. } = &tool_result {
+                            if let crate::ai::ContentPart::ToolResult {
+                                content, is_error, ..
+                            } = &tool_result
+                            {
                                 if let Some(true) = is_error {
                                     app_state.add_error(content);
                                 } else {
@@ -335,11 +384,12 @@ async fn run_app(
                         }
                         Err(error) => {
                             app_state.add_error(&format!("Tool execution failed: {}", error));
-                            app_state.pending_tool_result = Some(crate::ai::ContentPart::ToolResult {
-                                tool_use_id,
-                                content: error,
-                                is_error: Some(true),
-                            });
+                            app_state.pending_tool_result =
+                                Some(crate::ai::ContentPart::ToolResult {
+                                    tool_use_id,
+                                    content: error,
+                                    is_error: Some(true),
+                                });
                             app_state.continue_after_permission = true;
                         }
                     }
@@ -347,26 +397,26 @@ async fn run_app(
                 }
             }
         }
-        
+
         // Check if we should exit
         if app_state.should_exit() {
             break;
         }
     }
-    
+
     Ok(())
 }
 
 /// Draw the UI
 fn draw_ui(f: &mut Frame, app_state: &mut AppState) {
     let size = f.area();
-    
+
     // Update input state detection for paste handling
     app_state.detect_paste_and_update_input_state();
-    
+
     // Get dynamic input height based on expansion state
     let input_height = app_state.get_input_display_height();
-    
+
     // Create main layout with spacing
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -377,30 +427,30 @@ fn draw_ui(f: &mut Frame, app_state: &mut AppState) {
             Constraint::Length(1),            // Status bar
         ])
         .split(size);
-    
+
     // Draw chat view with scrolling support
     // Get cached lines and rebuild cache if needed
     let cached_lines = app_state.get_cached_lines().clone();
-    
+
     let chat_view = ChatView::new(&app_state.messages)
         .with_scroll(app_state.scroll_offset)
         .with_session_picker(
             app_state.show_session_picker,
-            app_state.session_picker_selected
+            app_state.session_picker_selected,
         )
         .with_expanded(app_state.expanded_view)
         .with_cached_lines(&cached_lines)
         .with_task_status(
             app_state.current_task_status.as_deref(),
             app_state.get_spinner_char(),
-            app_state.is_processing
+            app_state.is_processing,
         )
         .with_next_todo(app_state.next_todo.as_deref())
         .with_selection(app_state.chat_selection_start, app_state.chat_selection_end);
     f.render_widget(chat_view, chunks[0]);
-    
+
     // chunks[1] is now the padding space - leave it empty
-    
+
     // Draw textarea with border - create title based on input state
     let line_count = app_state.calculate_input_line_count();
     let title = if app_state.input_expanded {
@@ -413,48 +463,58 @@ fn draw_ui(f: &mut Frame, app_state: &mut AppState) {
         // Collapsed state - show line count indicator
         let collapsed_lines = line_count.saturating_sub(3);
         if collapsed_lines > 0 {
-            format!(" Input (collapsed, +{} lines, Ctrl+E to expand) ", collapsed_lines)
+            format!(
+                " Input (collapsed, +{} lines, Ctrl+E to expand) ",
+                collapsed_lines
+            )
         } else {
             " Input (Ctrl+E to expand, Enter to send) ".to_string()
         }
     };
-    
-    let input_block = Block::default()
-        .title(title)
-        .borders(Borders::ALL)
-        .style(if app_state.input_mode {
-            Style::default()
-        } else {
-            Style::default().add_modifier(Modifier::DIM)
-        });
+
+    let input_block =
+        Block::default()
+            .title(title)
+            .borders(Borders::ALL)
+            .style(if app_state.input_mode {
+                Style::default()
+            } else {
+                Style::default().add_modifier(Modifier::DIM)
+            });
     let inner = input_block.inner(chunks[2]);
     f.render_widget(input_block, chunks[2]);
-    
+
     // Render input content based on expansion state
     if app_state.input_expanded {
         // Normal expanded view - let textarea handle everything
         f.render_widget(&app_state.input_textarea, inner);
     } else {
         // Collapsed view - show only first 3 lines with manual rendering
-        let lines: Vec<String> = app_state.input_textarea.lines().into_iter().map(|s| s.to_string()).collect();
+        let lines: Vec<String> = app_state
+            .input_textarea
+            .lines()
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect();
         let mut display_lines = Vec::new();
         let max_width = inner.width as usize;
-        
+
         // Show first 3 lines with wrapping for long lines
         let mut visual_line_count = 0;
         for line in lines.iter() {
             if visual_line_count >= 3 {
                 break;
             }
-            
+
             // Wrap long lines to fit within the inner width
             if line.len() > max_width {
-                let chunks: Vec<String> = line.chars()
+                let chunks: Vec<String> = line
+                    .chars()
                     .collect::<Vec<_>>()
                     .chunks(max_width.saturating_sub(1)) // Leave space for cursor
                     .map(|chunk| chunk.iter().collect::<String>())
                     .collect();
-                    
+
                 for chunk in chunks {
                     if visual_line_count >= 3 {
                         break;
@@ -467,31 +527,31 @@ fn draw_ui(f: &mut Frame, app_state: &mut AppState) {
                 visual_line_count += 1;
             }
         }
-        
+
         // Add indicator if there are more lines
         if lines.len() > 3 {
             let extra_lines = lines.len() - 3;
             let indicator = format!("... +{} more lines (Ctrl+E to expand)", extra_lines);
             display_lines.push(Line::from(Span::styled(
                 indicator,
-                Style::default().add_modifier(Modifier::DIM)
+                Style::default().add_modifier(Modifier::DIM),
             )));
         }
-        
+
         // Fill remaining space with empty lines if needed
         let available_height = inner.height as usize;
         while display_lines.len() < available_height {
             display_lines.push(Line::from(""));
         }
-        
+
         let collapsed_paragraph = Paragraph::new(display_lines);
         f.render_widget(collapsed_paragraph, inner);
     }
-    
+
     // Draw status bar
     let status_bar = StatusBar::new(app_state);
     f.render_widget(status_bar, chunks[3]);
-    
+
     // Draw tool panel if active
     if app_state.show_tool_panel {
         let area = centered_rect(80, 60, size);
@@ -499,14 +559,14 @@ fn draw_ui(f: &mut Frame, app_state: &mut AppState) {
         let tool_panel = ToolPanel::new(&app_state.active_tools);
         f.render_widget(tool_panel, area);
     }
-    
+
     // Draw help overlay if active
     if app_state.show_help {
         let area = centered_rect(60, 80, size);
         f.render_widget(Clear, area);
         draw_help(f, area);
     }
-    
+
     // Draw debug panel if active
     if app_state.debug_mode {
         let area = Rect {
@@ -518,7 +578,7 @@ fn draw_ui(f: &mut Frame, app_state: &mut AppState) {
         f.render_widget(Clear, area);
         draw_debug_panel(f, area, app_state);
     }
-    
+
     // Draw session picker overlay if active
     if app_state.show_session_picker {
         draw_session_picker(f, size, app_state);
@@ -545,31 +605,36 @@ fn draw_ui(f: &mut Frame, app_state: &mut AppState) {
         };
         f.render_widget(Clear, progress_area);
 
-        let progress_widget = ProgressIndicator::new("Processing...".to_string())
-            .with_progress(progress);
+        let progress_widget =
+            ProgressIndicator::new("Processing...".to_string()).with_progress(progress);
         f.render_widget(progress_widget, progress_area);
     }
 
     // Draw permission dialog if active
     app_state.permission_dialog.render(f, size);
-    
+
+    // Draw question dialog if active (AskUserQuestion)
+    if app_state.show_question_dialog {
+        draw_question_dialog(f, size, app_state);
+    }
+
     // Draw autocomplete dropdown if active
     if app_state.is_autocomplete_visible && !app_state.autocomplete_matches.is_empty() {
         // Position dropdown just above the input area
         let dropdown_height = (app_state.autocomplete_matches.len() * 3 + 2).min(32); // 3 lines per item + border
         let dropdown_width = 60; // Fixed width
-        
+
         let dropdown_area = Rect {
             x: chunks[1].x,
             y: chunks[1].y.saturating_sub(dropdown_height as u16),
             width: dropdown_width.min(chunks[1].width),
             height: dropdown_height as u16,
         };
-        
+
         f.render_widget(Clear, dropdown_area);
         let dropdown = crate::tui::components::AutocompleteDropdown::new(
             &app_state.autocomplete_matches,
-            app_state.selected_suggestion
+            app_state.selected_suggestion,
         );
         f.render_widget(dropdown, dropdown_area);
     }
@@ -580,7 +645,7 @@ fn convert_key_to_input(key: KeyEvent) -> Input {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let alt = key.modifiers.contains(KeyModifiers::ALT);
     let shift = key.modifiers.contains(KeyModifiers::SHIFT);
-    
+
     let key_code = match key.code {
         KeyCode::Char(c) => Key::Char(c),
         KeyCode::Backspace => Key::Backspace,
@@ -599,7 +664,7 @@ fn convert_key_to_input(key: KeyEvent) -> Input {
         KeyCode::F(n) => Key::F(n),
         _ => Key::Null,
     };
-    
+
     Input {
         key: key_code,
         ctrl,
@@ -614,10 +679,10 @@ async fn handle_key_event(app_state: &mut AppState, key: KeyEvent) -> Result<()>
     if app_state.permission_dialog.visible {
         if let Some(decision) = app_state.permission_dialog.handle_key(key) {
             use crate::permissions::PermissionBehavior;
-            
+
             // Hide the dialog
             app_state.permission_dialog.hide();
-            
+
             // Handle the streaming permission flow - take from front of queue
             if let Some(pending) = app_state.pending_permissions.pop_front() {
                 // Convert PermissionBehavior to PermissionDecision
@@ -629,24 +694,32 @@ async fn handle_key_event(app_state: &mut AppState, key: KeyEvent) -> Result<()>
                     PermissionBehavior::Wait => crate::tui::PermissionDecision::Wait,
                     _ => crate::tui::PermissionDecision::Deny,
                 };
-                
+
                 // Send decision back through the oneshot channel to the streaming flow
                 // The streaming flow will handle updating the global permission context
                 let _ = pending.responder.send(permission_decision);
             }
-            
+
             // Check if there are more permissions pending and show the next dialog
             if let Some(next_pending) = app_state.pending_permissions.front() {
-                app_state.permission_dialog.show(crate::permissions::PermissionRequest {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    tool_name: next_pending.tool_name.clone(),
-                    action: "execute command".to_string(),
-                    details: next_pending.command.clone(),
-                    timestamp: std::time::Instant::now(),
-                });
+                app_state
+                    .permission_dialog
+                    .show(crate::permissions::PermissionRequest {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        tool_name: next_pending.tool_name.clone(),
+                        action: "execute command".to_string(),
+                        details: next_pending.command.clone(),
+                        timestamp: std::time::Instant::now(),
+                    });
             }
             // OLD PERMISSION FLOW REMOVED: All permission handling now happens in streaming flow
         }
+        return Ok(());
+    }
+
+    // Handle question dialog keys (AskUserQuestion)
+    if app_state.show_question_dialog {
+        handle_question_dialog_key(app_state, key);
         return Ok(());
     }
 
@@ -656,12 +729,16 @@ async fn handle_key_event(app_state: &mut AppState, key: KeyEvent) -> Result<()>
             KeyCode::Tab => {
                 // Cycle through tabs: Status (0) -> Config (1) -> Usage (2) -> Status (0)
                 app_state.status_view_tab = (app_state.status_view_tab + 1) % 3;
-                app_state.status_config_selected = 0;  // Reset selection when changing tabs
+                app_state.status_config_selected = 0; // Reset selection when changing tabs
                 return Ok(());
             }
             KeyCode::BackTab => {
                 // Reverse cycle through tabs
-                app_state.status_view_tab = if app_state.status_view_tab == 0 { 2 } else { app_state.status_view_tab - 1 };
+                app_state.status_view_tab = if app_state.status_view_tab == 0 {
+                    2
+                } else {
+                    app_state.status_view_tab - 1
+                };
                 app_state.status_config_selected = 0;
                 return Ok(());
             }
@@ -704,13 +781,17 @@ async fn handle_key_event(app_state: &mut AppState, key: KeyEvent) -> Result<()>
                 return Ok(());
             }
             KeyCode::Down => {
-                if app_state.session_picker_selected < app_state.session_picker_items.len().saturating_sub(1) {
+                if app_state.session_picker_selected
+                    < app_state.session_picker_items.len().saturating_sub(1)
+                {
                     app_state.session_picker_selected += 1;
                 }
                 return Ok(());
             }
             KeyCode::Enter => {
-                let session_id = app_state.session_picker_items[app_state.session_picker_selected].id.clone();
+                let session_id = app_state.session_picker_items[app_state.session_picker_selected]
+                    .id
+                    .clone();
                 app_state.show_session_picker = false;
                 app_state.resume_conversation(&session_id).await?;
                 return Ok(());
@@ -751,9 +832,11 @@ async fn handle_key_event(app_state: &mut AppState, key: KeyEvent) -> Result<()>
             _ => return Ok(()),
         }
     }
-    
+
     match key.code {
-        KeyCode::Char('q') | KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+        KeyCode::Char('q') | KeyCode::Char('d')
+            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+        {
             app_state.quit();
             return Ok(());
         }
@@ -854,7 +937,7 @@ async fn handle_key_event(app_state: &mut AppState, key: KeyEvent) -> Result<()>
         }
         _ => {}
     }
-    
+
     // Handle autocomplete dropdown first if it's visible
     if app_state.is_autocomplete_visible && !app_state.autocomplete_matches.is_empty() {
         match key.code {
@@ -905,29 +988,35 @@ async fn handle_key_event(app_state: &mut AppState, key: KeyEvent) -> Result<()>
             }
             return Ok(());
         }
-        
+
         // Special handling for Tab - completion
         if key.code == KeyCode::Tab {
             app_state.handle_tab_completion();
             return Ok(());
         }
-        
+
         // Vim/Emacs-style cursor navigation
         // Ctrl+P - move cursor up (previous line)
         if key.code == KeyCode::Char('p') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            app_state.input_textarea.move_cursor(tui_textarea::CursorMove::Up);
+            app_state
+                .input_textarea
+                .move_cursor(tui_textarea::CursorMove::Up);
             return Ok(());
         }
 
         // Ctrl+N - move cursor down (next line)
         if key.code == KeyCode::Char('n') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            app_state.input_textarea.move_cursor(tui_textarea::CursorMove::Down);
+            app_state
+                .input_textarea
+                .move_cursor(tui_textarea::CursorMove::Down);
             return Ok(());
         }
 
         // Ctrl+E - move cursor to end of line
         if key.code == KeyCode::Char('e') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            app_state.input_textarea.move_cursor(tui_textarea::CursorMove::End);
+            app_state
+                .input_textarea
+                .move_cursor(tui_textarea::CursorMove::End);
             return Ok(());
         }
 
@@ -939,13 +1028,17 @@ async fn handle_key_event(app_state: &mut AppState, key: KeyEvent) -> Result<()>
 
         // Ctrl+F - move cursor forward (right)
         if key.code == KeyCode::Char('f') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            app_state.input_textarea.move_cursor(tui_textarea::CursorMove::Forward);
+            app_state
+                .input_textarea
+                .move_cursor(tui_textarea::CursorMove::Forward);
             return Ok(());
         }
 
         // Ctrl+B - move cursor back (left)
         if key.code == KeyCode::Char('b') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            app_state.input_textarea.move_cursor(tui_textarea::CursorMove::Back);
+            app_state
+                .input_textarea
+                .move_cursor(tui_textarea::CursorMove::Back);
             return Ok(());
         }
 
@@ -999,42 +1092,54 @@ async fn handle_key_event(app_state: &mut AppState, key: KeyEvent) -> Result<()>
                     if !app_state.input_textarea.is_selecting() {
                         app_state.input_textarea.start_selection();
                     }
-                    app_state.input_textarea.move_cursor(tui_textarea::CursorMove::Back);
+                    app_state
+                        .input_textarea
+                        .move_cursor(tui_textarea::CursorMove::Back);
                     return Ok(());
                 }
                 KeyCode::Right => {
                     if !app_state.input_textarea.is_selecting() {
                         app_state.input_textarea.start_selection();
                     }
-                    app_state.input_textarea.move_cursor(tui_textarea::CursorMove::Forward);
+                    app_state
+                        .input_textarea
+                        .move_cursor(tui_textarea::CursorMove::Forward);
                     return Ok(());
                 }
                 KeyCode::Up => {
                     if !app_state.input_textarea.is_selecting() {
                         app_state.input_textarea.start_selection();
                     }
-                    app_state.input_textarea.move_cursor(tui_textarea::CursorMove::Up);
+                    app_state
+                        .input_textarea
+                        .move_cursor(tui_textarea::CursorMove::Up);
                     return Ok(());
                 }
                 KeyCode::Down => {
                     if !app_state.input_textarea.is_selecting() {
                         app_state.input_textarea.start_selection();
                     }
-                    app_state.input_textarea.move_cursor(tui_textarea::CursorMove::Down);
+                    app_state
+                        .input_textarea
+                        .move_cursor(tui_textarea::CursorMove::Down);
                     return Ok(());
                 }
                 KeyCode::Home => {
                     if !app_state.input_textarea.is_selecting() {
                         app_state.input_textarea.start_selection();
                     }
-                    app_state.input_textarea.move_cursor(tui_textarea::CursorMove::Head);
+                    app_state
+                        .input_textarea
+                        .move_cursor(tui_textarea::CursorMove::Head);
                     return Ok(());
                 }
                 KeyCode::End => {
                     if !app_state.input_textarea.is_selecting() {
                         app_state.input_textarea.start_selection();
                     }
-                    app_state.input_textarea.move_cursor(tui_textarea::CursorMove::End);
+                    app_state
+                        .input_textarea
+                        .move_cursor(tui_textarea::CursorMove::End);
                     return Ok(());
                 }
                 _ => {}
@@ -1042,20 +1147,27 @@ async fn handle_key_event(app_state: &mut AppState, key: KeyEvent) -> Result<()>
         }
 
         // Ctrl+Shift+Arrow for word selection
-        if key.modifiers.contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT) {
+        if key
+            .modifiers
+            .contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        {
             match key.code {
                 KeyCode::Left => {
                     if !app_state.input_textarea.is_selecting() {
                         app_state.input_textarea.start_selection();
                     }
-                    app_state.input_textarea.move_cursor(tui_textarea::CursorMove::WordBack);
+                    app_state
+                        .input_textarea
+                        .move_cursor(tui_textarea::CursorMove::WordBack);
                     return Ok(());
                 }
                 KeyCode::Right => {
                     if !app_state.input_textarea.is_selecting() {
                         app_state.input_textarea.start_selection();
                     }
-                    app_state.input_textarea.move_cursor(tui_textarea::CursorMove::WordForward);
+                    app_state
+                        .input_textarea
+                        .move_cursor(tui_textarea::CursorMove::WordForward);
                     return Ok(());
                 }
                 _ => {}
@@ -1094,7 +1206,7 @@ async fn handle_key_event(app_state: &mut AppState, key: KeyEvent) -> Result<()>
                 }
             }
             KeyCode::Down => {
-                // Allow history navigation if single line OR cursor is on last line  
+                // Allow history navigation if single line OR cursor is on last line
                 if lines.len() <= 1 || cursor_row == lines.len() - 1 {
                     app_state.history_down();
                     return Ok(());
@@ -1102,19 +1214,19 @@ async fn handle_key_event(app_state: &mut AppState, key: KeyEvent) -> Result<()>
             }
             _ => {}
         }
-        
+
         // Convert to tui_textarea Input and let it handle everything else
         let input = convert_key_to_input(key);
         app_state.input_textarea.input(input);
-        
+
         // Update input state detection after any text changes
         app_state.detect_paste_and_update_input_state();
-        
+
         // Trigger autocomplete search when input changes (matches JavaScript behavior)
         let current_input = app_state.input_textarea.lines()[0].clone();
         app_state.search_commands(&current_input);
     }
-    
+
     Ok(())
 }
 
@@ -1169,7 +1281,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
         "",
         "Press ESC to close this help",
     ];
-    
+
     let help_widget = Paragraph::new(help_text.join("\n"))
         .block(
             Block::default()
@@ -1178,7 +1290,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
                 .style(Style::default().fg(Color::Cyan)),
         )
         .style(Style::default());
-    
+
     f.render_widget(help_widget, area);
 }
 
@@ -1186,36 +1298,39 @@ fn draw_help(f: &mut Frame, area: Rect) {
 fn draw_session_picker(f: &mut Frame, area: Rect, app_state: &AppState) {
     let picker_area = centered_rect(90, 80, area);
     f.render_widget(Clear, picker_area);
-    
+
     let block = Block::default()
         .title(" Select a conversation to resume ")
         .borders(Borders::ALL)
         .style(Style::default().fg(Color::Cyan));
-    
+
     let inner = block.inner(picker_area);
     f.render_widget(block, picker_area);
-    
+
     let mut lines = vec![
         ratatui::text::Line::from(" /resume"),
-        ratatui::text::Line::from("     Modified     Created        Msgs Git Branch                     Summary"),
+        ratatui::text::Line::from(
+            "     Modified     Created        Msgs Git Branch                     Summary",
+        ),
         ratatui::text::Line::from(""),
     ];
-    
+
     for (i, session) in app_state.session_picker_items.iter().enumerate() {
         let modified = app_state.format_relative_time(session.modified_timestamp);
         let created = app_state.format_relative_time(session.created_timestamp);
-        
+
         let summary = "Loading...";
         let msgs = 0;
         let branch = app_state.get_git_branch();
-        
+
         let prefix = if i == app_state.session_picker_selected {
             "❯"
         } else {
             " "
         };
-        
-        let line_text = format!("{} {:>2}. {:12} {:12} {:>7} {:20} {}",
+
+        let line_text = format!(
+            "{} {:>2}. {:12} {:12} {:>7} {:20} {}",
             prefix,
             i + 1,
             modified,
@@ -1224,19 +1339,23 @@ fn draw_session_picker(f: &mut Frame, area: Rect, app_state: &AppState) {
             branch,
             summary
         );
-        
+
         let style = if i == app_state.session_picker_selected {
             Style::default().add_modifier(Modifier::REVERSED)
         } else {
             Style::default()
         };
-        
-        lines.push(ratatui::text::Line::from(vec![ratatui::text::Span::styled(line_text, style)]));
+
+        lines.push(ratatui::text::Line::from(vec![
+            ratatui::text::Span::styled(line_text, style),
+        ]));
     }
-    
+
     lines.push(ratatui::text::Line::from(""));
-    lines.push(ratatui::text::Line::from("Use ↑/↓ to select, Enter to resume, Esc to cancel"));
-    
+    lines.push(ratatui::text::Line::from(
+        "Use ↑/↓ to select, Enter to resume, Esc to cancel",
+    ));
+
     let paragraph = Paragraph::new(lines);
     f.render_widget(paragraph, inner);
 }
@@ -1258,7 +1377,7 @@ fn draw_model_picker(f: &mut Frame, area: Rect, app_state: &AppState) {
     let mut lines = vec![
         ratatui::text::Line::from(ratatui::text::Span::styled(
             "Choose a model for this session:",
-            Style::default().add_modifier(Modifier::DIM)
+            Style::default().add_modifier(Modifier::DIM),
         )),
         ratatui::text::Line::from(""),
     ];
@@ -1285,7 +1404,9 @@ fn draw_model_picker(f: &mut Frame, area: Rect, app_state: &AppState) {
 
         // Description line (indented)
         let desc_style = if is_selected {
-            Style::default().add_modifier(Modifier::REVERSED).add_modifier(Modifier::DIM)
+            Style::default()
+                .add_modifier(Modifier::REVERSED)
+                .add_modifier(Modifier::DIM)
         } else {
             Style::default().add_modifier(Modifier::DIM)
         };
@@ -1296,7 +1417,9 @@ fn draw_model_picker(f: &mut Frame, area: Rect, app_state: &AppState) {
 
         // Model ID line (indented, dimmer)
         let id_style = if is_selected {
-            Style::default().add_modifier(Modifier::REVERSED).add_modifier(Modifier::DIM)
+            Style::default()
+                .add_modifier(Modifier::REVERSED)
+                .add_modifier(Modifier::DIM)
         } else {
             Style::default().add_modifier(Modifier::DIM)
         };
@@ -1311,7 +1434,7 @@ fn draw_model_picker(f: &mut Frame, area: Rect, app_state: &AppState) {
     lines.push(ratatui::text::Line::from(""));
     lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
         "Use ↑/↓ to select, Enter to confirm, Esc to cancel",
-        Style::default().add_modifier(Modifier::DIM)
+        Style::default().add_modifier(Modifier::DIM),
     )));
 
     let paragraph = Paragraph::new(lines);
@@ -1332,27 +1455,29 @@ fn draw_status_view(f: &mut Frame, area: Rect, app_state: &AppState) {
 
     // Tab header: Settings: [Status] Config Usage (tab to cycle)
     let tab_names = ["Status", "Config", "Usage"];
-    let mut tab_spans: Vec<ratatui::text::Span> = vec![
-        ratatui::text::Span::styled("Settings: ", Style::default()),
-    ];
+    let mut tab_spans: Vec<ratatui::text::Span> =
+        vec![ratatui::text::Span::styled("Settings: ", Style::default())];
 
     for (i, name) in tab_names.iter().enumerate() {
         if i == app_state.status_view_tab {
             // Selected tab - highlighted
             tab_spans.push(ratatui::text::Span::styled(
                 format!(" {} ", name),
-                Style::default().bg(Color::Blue).fg(Color::White).add_modifier(ratatui::style::Modifier::BOLD)
+                Style::default()
+                    .bg(Color::Blue)
+                    .fg(Color::White)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
             ));
         } else {
             tab_spans.push(ratatui::text::Span::styled(
                 format!(" {} ", name),
-                Style::default().add_modifier(Modifier::DIM)
+                Style::default().add_modifier(Modifier::DIM),
             ));
         }
     }
     tab_spans.push(ratatui::text::Span::styled(
         " (tab to cycle)",
-        Style::default().add_modifier(Modifier::DIM)
+        Style::default().add_modifier(Modifier::DIM),
     ));
 
     let mut lines = vec![
@@ -1423,13 +1548,17 @@ fn draw_status_view(f: &mut Frame, area: Rect, app_state: &AppState) {
             // Config tab content (matches JavaScript screenshot)
             lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
                 "Configure Claude Code preferences",
-                Style::default().add_modifier(Modifier::DIM)
+                Style::default().add_modifier(Modifier::DIM),
             )));
             lines.push(ratatui::text::Line::from(""));
 
             let config_items = get_config_items();
             for (i, (name, value)) in config_items.iter().enumerate() {
-                let prefix = if i == app_state.status_config_selected { "❯ " } else { "  " };
+                let prefix = if i == app_state.status_config_selected {
+                    "❯ "
+                } else {
+                    "  "
+                };
                 let style = if i == app_state.status_config_selected {
                     Style::default().fg(Color::Cyan)
                 } else {
@@ -1460,55 +1589,58 @@ fn draw_status_view(f: &mut Frame, area: Rect, app_state: &AppState) {
 
             // Extra usage setting from actual settings files
             let extra_usage_enabled = {
-                let settings = crate::config::load_settings(crate::config::SettingsSource::User).ok();
-                settings.and_then(|s| s.extra.get("extraUsage").and_then(|v| v.as_bool())).unwrap_or(false)
+                let settings =
+                    crate::config::load_settings(crate::config::SettingsSource::User).ok();
+                settings
+                    .and_then(|s| s.extra.get("extraUsage").and_then(|v| v.as_bool()))
+                    .unwrap_or(false)
             };
 
             lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
                 "Current session",
-                Style::default().add_modifier(ratatui::style::Modifier::BOLD)
+                Style::default().add_modifier(ratatui::style::Modifier::BOLD),
             )));
             lines.push(ratatui::text::Line::from(render_usage_bar(session_pct)));
             lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
                 format!("{} / {} tokens used", token_count, model_limit),
-                Style::default().add_modifier(Modifier::DIM)
+                Style::default().add_modifier(Modifier::DIM),
             )));
             lines.push(ratatui::text::Line::from(""));
 
             // Weekly usage data requires API integration - show actual status
             lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
                 "Current week (all models)",
-                Style::default().add_modifier(ratatui::style::Modifier::BOLD)
+                Style::default().add_modifier(ratatui::style::Modifier::BOLD),
             )));
             lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
                 "Weekly usage data requires API integration",
-                Style::default().add_modifier(Modifier::DIM)
+                Style::default().add_modifier(Modifier::DIM),
             )));
             lines.push(ratatui::text::Line::from(""));
 
             lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
                 "Current week (Sonnet only)",
-                Style::default().add_modifier(ratatui::style::Modifier::BOLD)
+                Style::default().add_modifier(ratatui::style::Modifier::BOLD),
             )));
             lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
                 "Weekly usage data requires API integration",
-                Style::default().add_modifier(Modifier::DIM)
+                Style::default().add_modifier(Modifier::DIM),
             )));
             lines.push(ratatui::text::Line::from(""));
 
             lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
                 "Extra usage",
-                Style::default().add_modifier(ratatui::style::Modifier::BOLD)
+                Style::default().add_modifier(ratatui::style::Modifier::BOLD),
             )));
             if extra_usage_enabled {
                 lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
                     "Extra usage enabled",
-                    Style::default().fg(Color::Green)
+                    Style::default().fg(Color::Green),
                 )));
             } else {
                 lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
                     "Extra usage not enabled • /extra-usage to enable",
-                    Style::default().add_modifier(Modifier::DIM)
+                    Style::default().add_modifier(Modifier::DIM),
                 )));
             }
         }
@@ -1523,7 +1655,7 @@ fn draw_status_view(f: &mut Frame, area: Rect, app_state: &AppState) {
     };
     lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
         footer,
-        Style::default().add_modifier(Modifier::DIM)
+        Style::default().add_modifier(Modifier::DIM),
     )));
 
     let paragraph = Paragraph::new(lines);
@@ -1540,13 +1672,16 @@ fn get_account_info() -> (String, String, String) {
     if oauth_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&oauth_path) {
             if let Ok(token_data) = serde_json::from_str::<serde_json::Value>(&content) {
-                let account_type = token_data.get("accountType")
+                let account_type = token_data
+                    .get("accountType")
                     .and_then(|t| t.as_str())
                     .unwrap_or("Claude Account");
-                let email = token_data.get("email")
+                let email = token_data
+                    .get("email")
                     .and_then(|e| e.as_str())
                     .unwrap_or("unknown");
-                let org = token_data.get("organization")
+                let org = token_data
+                    .get("organization")
                     .or_else(|| token_data.get("organizationName"))
                     .and_then(|o| o.as_str())
                     .map(|o| format!("{}'s Organization", o))
@@ -1559,10 +1694,18 @@ fn get_account_info() -> (String, String, String) {
 
     // Fall back to API key
     if std::env::var("ANTHROPIC_API_KEY").is_ok() {
-        return ("API Key".to_string(), "(using direct API key)".to_string(), "(not applicable)".to_string());
+        return (
+            "API Key".to_string(),
+            "(using direct API key)".to_string(),
+            "(not applicable)".to_string(),
+        );
     }
 
-    ("Not logged in".to_string(), "(none)".to_string(), "(none)".to_string())
+    (
+        "Not logged in".to_string(),
+        "(none)".to_string(),
+        "(none)".to_string(),
+    )
 }
 
 /// Format model display string
@@ -1617,7 +1760,8 @@ fn get_setting_sources() -> String {
 fn get_config_items() -> Vec<(&'static str, String)> {
     // Load settings from all sources (user, project, local)
     let user_settings = crate::config::load_settings(crate::config::SettingsSource::User).ok();
-    let project_settings = crate::config::load_settings(crate::config::SettingsSource::Project).ok();
+    let project_settings =
+        crate::config::load_settings(crate::config::SettingsSource::Project).ok();
     let local_settings = crate::config::load_settings(crate::config::SettingsSource::Local).ok();
 
     // Helper to get a value from settings hierarchy (local > project > user)
@@ -1647,19 +1791,30 @@ fn get_config_items() -> Vec<(&'static str, String)> {
         ("Rewind code (checkpoints)", get_setting("rewindCode")),
         ("Verbose output", get_setting("verboseOutput")),
         ("Terminal progress bar", get_setting("terminalProgressBar")),
-        ("Default permission mode", get_setting("defaultPermissionMode")),
-        ("Respect .gitignore in file picker", get_setting("respectGitignore")),
+        (
+            "Default permission mode",
+            get_setting("defaultPermissionMode"),
+        ),
+        (
+            "Respect .gitignore in file picker",
+            get_setting("respectGitignore"),
+        ),
         ("Theme", get_setting("theme")),
         ("Notifications", get_setting("notifications")),
         ("Output style", get_setting("outputStyle")),
         ("Editor mode", get_setting("editorMode")),
         ("Model", get_setting("model")),
-        ("Auto-connect to IDE (external terminal)", get_setting("autoConnectIDE")),
-        ("Claude in Chrome enabled by default", get_setting("chromeExtension")),
+        (
+            "Auto-connect to IDE (external terminal)",
+            get_setting("autoConnectIDE"),
+        ),
+        (
+            "Claude in Chrome enabled by default",
+            get_setting("chromeExtension"),
+        ),
         ("Use custom API key", get_setting("useCustomApiKey")),
     ]
 }
-
 
 /// Render usage bar for status view
 fn render_usage_bar(percent: u8) -> Vec<ratatui::text::Span<'static>> {
@@ -1670,15 +1825,15 @@ fn render_usage_bar(percent: u8) -> Vec<ratatui::text::Span<'static>> {
     let mut spans = vec![];
     spans.push(ratatui::text::Span::styled(
         "█".repeat(filled),
-        Style::default().fg(Color::Blue)
+        Style::default().fg(Color::Blue),
     ));
     spans.push(ratatui::text::Span::styled(
         "░".repeat(empty),
-        Style::default().add_modifier(Modifier::DIM)
+        Style::default().add_modifier(Modifier::DIM),
     ));
     spans.push(ratatui::text::Span::styled(
         format!(" {}% used", percent),
-        Style::default()
+        Style::default(),
     ));
     spans
 }
@@ -1696,13 +1851,16 @@ fn draw_debug_panel(f: &mut Frame, area: Rect, app_state: &AppState) {
         "".to_string(),
         "Memory Usage:".to_string(),
         format!("  Heap: {}", crate::utils::format_bytes(get_memory_usage())),
-        format!("  Messages: {}", crate::utils::format_bytes(app_state.get_message_memory())),
+        format!(
+            "  Messages: {}",
+            crate::utils::format_bytes(app_state.get_message_memory())
+        ),
         "".to_string(),
         "Performance:".to_string(),
         format!("  FPS: {:.1}", app_state.get_fps()),
         format!("  Latency: {}ms", app_state.get_latency()),
     ];
-    
+
     let debug_widget = Paragraph::new(debug_info.join("\n"))
         .block(
             Block::default()
@@ -1711,11 +1869,330 @@ fn draw_debug_panel(f: &mut Frame, area: Rect, app_state: &AppState) {
                 .style(Style::default().fg(Color::Yellow)),
         )
         .style(Style::default().add_modifier(Modifier::DIM));
-    
+
     f.render_widget(debug_widget, area);
 }
 
 /// Create a centered rectangle
+/// Handle key events for the AskUserQuestion dialog
+fn handle_question_dialog_key(app_state: &mut AppState, key: KeyEvent) {
+    if app_state.question_dialog_questions.is_empty() {
+        return;
+    }
+
+    let current_q =
+        &app_state.question_dialog_questions[app_state.question_dialog_current_question];
+    let is_multi = current_q.multi_select;
+    // Options count: actual options + 1 for "Other"
+    let option_count = current_q.options.len() + 1;
+
+    if app_state.question_dialog_in_other_mode {
+        // In "Other" text input mode
+        match key.code {
+            KeyCode::Esc => {
+                // Exit other mode, go back to option selection
+                app_state.question_dialog_in_other_mode = false;
+                app_state.question_dialog_other_input = None;
+            }
+            KeyCode::Enter => {
+                // Submit the "Other" text as the answer for this question
+                let answer = app_state
+                    .question_dialog_other_input
+                    .take()
+                    .unwrap_or_default();
+                if !answer.is_empty() {
+                    let q_text = current_q.question.clone();
+                    app_state.question_dialog_answers.insert(q_text, answer);
+                    app_state.question_dialog_in_other_mode = false;
+                    advance_question_dialog(app_state);
+                }
+            }
+            KeyCode::Backspace => {
+                if let Some(ref mut input) = app_state.question_dialog_other_input {
+                    input.pop();
+                }
+            }
+            KeyCode::Char(c) => {
+                app_state
+                    .question_dialog_other_input
+                    .get_or_insert_with(String::new)
+                    .push(c);
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    match key.code {
+        KeyCode::Up => {
+            if app_state.question_dialog_selected_option > 0 {
+                app_state.question_dialog_selected_option -= 1;
+            }
+        }
+        KeyCode::Down => {
+            if app_state.question_dialog_selected_option < option_count - 1 {
+                app_state.question_dialog_selected_option += 1;
+            }
+        }
+        KeyCode::Char(' ') if is_multi => {
+            // Toggle multi-select for the selected option (not "Other")
+            let sel = app_state.question_dialog_selected_option;
+            if sel < current_q.options.len() {
+                if app_state.question_dialog_multi_selected.contains(&sel) {
+                    app_state.question_dialog_multi_selected.remove(&sel);
+                } else {
+                    app_state.question_dialog_multi_selected.insert(sel);
+                }
+            }
+        }
+        KeyCode::Enter => {
+            let sel = app_state.question_dialog_selected_option;
+
+            if sel == current_q.options.len() {
+                // "Other" option selected — enter text input mode
+                app_state.question_dialog_in_other_mode = true;
+                app_state.question_dialog_other_input = Some(String::new());
+            } else if is_multi {
+                // Multi-select: confirm current selections
+                let q_text = current_q.question.clone();
+                let selected_labels: Vec<String> = app_state
+                    .question_dialog_multi_selected
+                    .iter()
+                    .filter_map(|&idx| current_q.options.get(idx).map(|o| o.label.clone()))
+                    .collect();
+                if selected_labels.is_empty() {
+                    // Nothing selected yet — treat Enter as selecting the current option, then confirm
+                    let label = current_q.options[sel].label.clone();
+                    app_state.question_dialog_answers.insert(q_text, label);
+                } else {
+                    app_state
+                        .question_dialog_answers
+                        .insert(q_text, selected_labels.join(", "));
+                }
+                app_state.question_dialog_multi_selected.clear();
+                advance_question_dialog(app_state);
+            } else {
+                // Single-select: select the option and advance
+                let q_text = current_q.question.clone();
+                let label = current_q.options[sel].label.clone();
+                app_state.question_dialog_answers.insert(q_text, label);
+                advance_question_dialog(app_state);
+            }
+        }
+        KeyCode::Esc => {
+            // Cancel the dialog — send empty answers
+            close_question_dialog(app_state, true);
+        }
+        _ => {}
+    }
+}
+
+/// Advance to the next question or finish the dialog
+fn advance_question_dialog(app_state: &mut AppState) {
+    let total = app_state.question_dialog_questions.len();
+    if app_state.question_dialog_current_question + 1 < total {
+        app_state.question_dialog_current_question += 1;
+        app_state.question_dialog_selected_option = 0;
+        app_state.question_dialog_multi_selected.clear();
+        app_state.question_dialog_other_input = None;
+        app_state.question_dialog_in_other_mode = false;
+    } else {
+        // All questions answered — send answers and close
+        close_question_dialog(app_state, false);
+    }
+}
+
+/// Close the question dialog and send answers (or empty if cancelled)
+fn close_question_dialog(app_state: &mut AppState, cancelled: bool) {
+    app_state.show_question_dialog = false;
+    let answers = if cancelled {
+        std::collections::HashMap::new()
+    } else {
+        std::mem::take(&mut app_state.question_dialog_answers)
+    };
+
+    if let Some(responder) = app_state.question_dialog_responder.take() {
+        let _ = responder.send(answers);
+    }
+
+    // Reset dialog state
+    app_state.question_dialog_questions.clear();
+    app_state.question_dialog_current_question = 0;
+    app_state.question_dialog_selected_option = 0;
+    app_state.question_dialog_answers.clear();
+    app_state.question_dialog_other_input = None;
+    app_state.question_dialog_in_other_mode = false;
+    app_state.question_dialog_multi_selected.clear();
+}
+
+/// Draw the AskUserQuestion dialog overlay
+fn draw_question_dialog(f: &mut Frame, area: Rect, app_state: &AppState) {
+    if app_state.question_dialog_questions.is_empty() {
+        return;
+    }
+
+    let current_q =
+        &app_state.question_dialog_questions[app_state.question_dialog_current_question];
+    let total_questions = app_state.question_dialog_questions.len();
+
+    // Calculate dialog size
+    let dialog_height = (6 + current_q.options.len() as u16 + 1 + 3).min(area.height - 4);
+    // If in other mode, add extra height for the text input
+    let dialog_height = if app_state.question_dialog_in_other_mode {
+        (dialog_height + 2).min(area.height - 2)
+    } else {
+        dialog_height
+    };
+    let dialog_width = 60u16.min(area.width - 4);
+
+    let dialog_area = Rect {
+        x: (area.width.saturating_sub(dialog_width)) / 2,
+        y: (area.height.saturating_sub(dialog_height)) / 2,
+        width: dialog_width,
+        height: dialog_height,
+    };
+
+    // Clear the background
+    f.render_widget(Clear, dialog_area);
+
+    // Build the title
+    let title = if total_questions > 1 {
+        format!(
+            " Question {}/{} - [{}] ",
+            app_state.question_dialog_current_question + 1,
+            total_questions,
+            current_q.header
+        )
+    } else {
+        format!(" [{}] ", current_q.header)
+    };
+
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .style(Style::default().fg(Color::Cyan));
+
+    let inner = block.inner(dialog_area);
+    f.render_widget(block, dialog_area);
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Question text
+    lines.push(Line::from(Span::styled(
+        &current_q.question,
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(""));
+
+    // Options
+    for (idx, option) in current_q.options.iter().enumerate() {
+        let is_selected = idx == app_state.question_dialog_selected_option;
+        let is_multi_checked = app_state.question_dialog_multi_selected.contains(&idx);
+
+        let prefix = if current_q.multi_select {
+            if is_multi_checked {
+                "[x] "
+            } else {
+                "[ ] "
+            }
+        } else {
+            if is_selected {
+                "> "
+            } else {
+                "  "
+            }
+        };
+
+        let style = if is_selected {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+
+        let mut spans = vec![
+            Span::styled(prefix, style),
+            Span::styled(&option.label, style),
+        ];
+
+        if let Some(ref desc) = option.description {
+            spans.push(Span::styled(
+                format!(" — {}", desc),
+                Style::default().fg(Color::Gray),
+            ));
+        }
+
+        lines.push(Line::from(spans));
+    }
+
+    // "Other" option
+    {
+        let idx = current_q.options.len();
+        let is_selected = idx == app_state.question_dialog_selected_option;
+        let prefix = if current_q.multi_select {
+            "[ ] "
+        } else {
+            if is_selected {
+                "> "
+            } else {
+                "  "
+            }
+        };
+        let style = if is_selected {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        lines.push(Line::from(vec![
+            Span::styled(prefix, style),
+            Span::styled("Other...", style),
+        ]));
+    }
+
+    // "Other" text input if active
+    if app_state.question_dialog_in_other_mode {
+        lines.push(Line::from(""));
+        let input_text = app_state
+            .question_dialog_other_input
+            .as_deref()
+            .unwrap_or("");
+        lines.push(Line::from(vec![
+            Span::styled("  > ", Style::default().fg(Color::Green)),
+            Span::styled(input_text, Style::default().fg(Color::White)),
+            Span::styled(
+                "_",
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::SLOW_BLINK),
+            ),
+        ]));
+    }
+
+    // Footer with key hints
+    lines.push(Line::from(""));
+    let hint = if app_state.question_dialog_in_other_mode {
+        "Enter: submit | Esc: back"
+    } else if current_q.multi_select {
+        "Space: toggle | Enter: confirm | Esc: cancel"
+    } else {
+        "Enter: select | Esc: cancel"
+    };
+    lines.push(Line::from(Span::styled(
+        hint,
+        Style::default()
+            .fg(Color::Gray)
+            .add_modifier(Modifier::ITALIC),
+    )));
+
+    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+    f.render_widget(paragraph, inner);
+}
+
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)
@@ -1739,7 +2216,7 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 /// Load MCP servers from configuration
 async fn load_mcp_servers(app_state: &mut AppState, config: &str) -> Result<()> {
     let servers = mcp::parse_config(config)?;
-    
+
     for (name, server_config) in servers {
         match mcp::start_client(name.clone(), server_config).await {
             Ok(client) => {
@@ -1750,7 +2227,7 @@ async fn load_mcp_servers(app_state: &mut AppState, config: &str) -> Result<()> 
             }
         }
     }
-    
+
     Ok(())
 }
 

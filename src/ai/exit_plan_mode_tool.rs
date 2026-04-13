@@ -1,6 +1,6 @@
+use crate::error::Result;
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use crate::error::Result;
 use tokio_util::sync::CancellationToken;
 
 /// ExitPlanMode tool - matches JavaScript implementation
@@ -33,7 +33,11 @@ impl crate::ai::tools::ToolHandler for ExitPlanModeTool {
         "Exit plan mode".to_string()
     }
 
-    async fn execute(&self, _input: Value, _cancellation_token: Option<CancellationToken>) -> Result<String> {
+    async fn execute(
+        &self,
+        _input: Value,
+        _cancellation_token: Option<CancellationToken>,
+    ) -> Result<String> {
         // The plan is read from the plan file, not from input
         // This just signals readiness to exit plan mode
         let response = json!({

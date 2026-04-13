@@ -212,7 +212,8 @@ Steps:
             is_hidden: false,
             source: SkillSource::BuiltIn,
             skill_dir: None,
-            content: Some(r#"Review the specified GitHub pull request.
+            content: Some(
+                r#"Review the specified GitHub pull request.
 
 $ARGUMENTS
 
@@ -225,7 +226,9 @@ Steps:
    - Test coverage
    - Documentation
 4. Provide a constructive review with specific suggestions
-"#.to_string()),
+"#
+                .to_string(),
+            ),
         },
     );
 
@@ -246,12 +249,15 @@ Steps:
             is_hidden: false,
             source: SkillSource::BuiltIn,
             skill_dir: None,
-            content: Some(r#"Extract and analyze content from the specified PDF file.
+            content: Some(
+                r#"Extract and analyze content from the specified PDF file.
 
 $ARGUMENTS
 
 Use the Read tool to read the PDF file. The tool will automatically extract text content from PDFs.
-"#.to_string()),
+"#
+                .to_string(),
+            ),
         },
     );
 
@@ -286,7 +292,8 @@ impl SkillManager {
         if let Some(home) = dirs::home_dir() {
             let user_skills_dir = home.join(".claude").join("skills");
             if user_skills_dir.exists() {
-                let skills = load_skills_from_directory(&user_skills_dir, SkillSource::UserSettings).await;
+                let skills =
+                    load_skills_from_directory(&user_skills_dir, SkillSource::UserSettings).await;
                 for skill in skills {
                     self.skills.insert(skill.name.clone(), skill);
                 }
@@ -297,7 +304,9 @@ impl SkillManager {
         if let Ok(cwd) = std::env::current_dir() {
             let project_skills_dir = cwd.join(".claude").join("skills");
             if project_skills_dir.exists() {
-                let skills = load_skills_from_directory(&project_skills_dir, SkillSource::ProjectSettings).await;
+                let skills =
+                    load_skills_from_directory(&project_skills_dir, SkillSource::ProjectSettings)
+                        .await;
                 for skill in skills {
                     self.skills.insert(skill.name.clone(), skill);
                 }
@@ -399,22 +408,23 @@ async fn load_skills_from_directory(dir: &Path, source: SkillSource) -> Vec<Skil
 }
 
 /// Load a skill from a SKILL.md file
-async fn load_skill_from_file(file_path: &Path, skill_dir: &Path, source: &SkillSource) -> Option<Skill> {
+async fn load_skill_from_file(
+    file_path: &Path,
+    skill_dir: &Path,
+    source: &SkillSource,
+) -> Option<Skill> {
     let content = async_fs::read_to_string(file_path).await.ok()?;
 
     // Parse frontmatter and content
     let (frontmatter, body) = parse_skill_frontmatter(&content);
 
     // Get skill name from frontmatter or directory name
-    let name = frontmatter
-        .name
-        .clone()
-        .or_else(|| {
-            skill_dir
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(String::from)
-        })?;
+    let name = frontmatter.name.clone().or_else(|| {
+        skill_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(String::from)
+    })?;
 
     // Get description from frontmatter or extract from body
     let description = frontmatter
@@ -426,13 +436,10 @@ async fn load_skill_from_file(file_path: &Path, skill_dir: &Path, source: &Skill
     let disable_model_invocation = frontmatter.disable_model_invocation.unwrap_or(false);
 
     // Get model override (ignore "inherit")
-    let model = frontmatter.model.clone().and_then(|m| {
-        if m == "inherit" {
-            None
-        } else {
-            Some(m)
-        }
-    });
+    let model = frontmatter
+        .model
+        .clone()
+        .and_then(|m| if m == "inherit" { None } else { Some(m) });
 
     Some(Skill {
         skill_type: SkillType::Prompt,
@@ -490,7 +497,14 @@ fn extract_description_from_content(content: &str) -> String {
         if trimmed.len() <= MAX_DESCRIPTION_LEN {
             return trimmed.to_string();
         }
-        return format!("{}...", &trimmed[..MAX_DESCRIPTION_LEN - 3]);
+        // Use char_indices to avoid panicking on multi-byte UTF-8 boundaries
+        let truncate_at = trimmed
+            .char_indices()
+            .take_while(|(i, _)| *i < MAX_DESCRIPTION_LEN - 3)
+            .last()
+            .map(|(i, c)| i + c.len_utf8())
+            .unwrap_or(MAX_DESCRIPTION_LEN - 3);
+        return format!("{}...", &trimmed[..truncate_at]);
     }
 
     "Skill".to_string()
@@ -587,7 +601,11 @@ Important:
         }
     }
 
-    async fn execute(&self, input: Value, _cancellation_token: Option<CancellationToken>) -> Result<String> {
+    async fn execute(
+        &self,
+        input: Value,
+        _cancellation_token: Option<CancellationToken>,
+    ) -> Result<String> {
         // Get skill name from input
         let skill_name = input["skill"]
             .as_str()
@@ -619,9 +637,9 @@ Important:
         }
 
         // Get the skill
-        let skill = manager.get_skill(normalized_name).ok_or_else(|| {
-            Error::NotFound(format!("Could not load skill: {}", normalized_name))
-        })?;
+        let skill = manager
+            .get_skill(normalized_name)
+            .ok_or_else(|| Error::NotFound(format!("Could not load skill: {}", normalized_name)))?;
 
         // Check if skill can be invoked via model
         if skill.disable_model_invocation {
@@ -748,7 +766,9 @@ mod tests {
         assert_eq!(schema["type"], "object");
         assert!(schema["properties"]["skill"].is_object());
         assert!(schema["properties"]["args"].is_object());
-        let required = schema["required"].as_array().expect("required should be array");
+        let required = schema["required"]
+            .as_array()
+            .expect("required should be array");
         assert!(required.contains(&json!("skill")));
     }
 
@@ -803,5 +823,125 @@ mod tests {
         assert!(formatted.contains("/commit"));
         assert!(formatted.contains("/review-pr"));
         assert!(formatted.contains("/pdf"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_builtin_skill() {
+        let tool = SkillTool;
+        let input = json!({ "skill": "commit" });
+        let result = tool.execute(input, None).await;
+        assert!(
+            result.is_ok(),
+            "execute should succeed for builtin 'commit' skill"
+        );
+        let output: Value = serde_json::from_str(
+            &result
+                .as_ref()
+                .map_err(|e| format!("{}", e))
+                .expect("result"),
+        )
+        .expect("output should be valid JSON");
+        assert_eq!(output["result"]["success"], true);
+        assert_eq!(output["result"]["commandName"], "commit");
+        assert!(output["prompt"].as_str().is_some());
+        assert_eq!(output["skill_source"], "built-in");
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_leading_slash() {
+        let tool = SkillTool;
+        let input = json!({ "skill": "/pdf" });
+        let result = tool.execute(input, None).await;
+        assert!(result.is_ok(), "should handle leading slash in skill name");
+        let output: Value = serde_json::from_str(
+            &result
+                .as_ref()
+                .map_err(|e| format!("{}", e))
+                .expect("result"),
+        )
+        .expect("output should be valid JSON");
+        assert_eq!(output["result"]["commandName"], "pdf");
+    }
+
+    #[tokio::test]
+    async fn test_execute_unknown_skill_returns_error() {
+        let tool = SkillTool;
+        let input = json!({ "skill": "nonexistent-skill" });
+        let result = tool.execute(input, None).await;
+        assert!(result.is_err(), "should return error for unknown skill");
+    }
+
+    #[tokio::test]
+    async fn test_execute_empty_skill_returns_error() {
+        let tool = SkillTool;
+        let input = json!({ "skill": "  " });
+        let result = tool.execute(input, None).await;
+        assert!(result.is_err(), "should return error for empty skill name");
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_args() {
+        let tool = SkillTool;
+        let input = json!({ "skill": "review-pr", "args": "123" });
+        let result = tool.execute(input, None).await;
+        assert!(result.is_ok(), "should succeed with args");
+        let output: Value = serde_json::from_str(
+            &result
+                .as_ref()
+                .map_err(|e| format!("{}", e))
+                .expect("result"),
+        )
+        .expect("output should be valid JSON");
+        // review-pr uses $ARGUMENTS placeholder, so "123" should be in prompt
+        let prompt = output["prompt"].as_str().expect("prompt should be string");
+        assert!(prompt.contains("123"), "args should be in prompt");
+        assert!(
+            !prompt.contains("$ARGUMENTS"),
+            "$ARGUMENTS placeholder should be replaced"
+        );
+    }
+
+    #[test]
+    fn test_extract_description_with_multibyte_chars() {
+        // Create a string with multi-byte UTF-8 characters that exceeds 100 chars
+        let content = "This is a test string with some emoji characters \u{1F600}\u{1F601}\u{1F602}\u{1F603}\u{1F604}\u{1F605}\u{1F606}\u{1F607}\u{1F608}\u{1F609}\u{1F60A}\u{1F60B}\u{1F60C} and more text to make it long enough to trigger truncation behavior.";
+        let desc = extract_description_from_content(content);
+        assert!(desc.ends_with("..."), "should end with ellipsis");
+        // Should not panic on multi-byte boundaries
+    }
+
+    #[test]
+    fn test_skill_with_disable_model_invocation() {
+        let skill = Skill {
+            skill_type: SkillType::Prompt,
+            name: "restricted".to_string(),
+            description: "Restricted skill".to_string(),
+            allowed_tools: None,
+            argument_hint: None,
+            when_to_use: None,
+            version: None,
+            model: None,
+            is_skill: true,
+            disable_model_invocation: true,
+            is_hidden: false,
+            source: SkillSource::BuiltIn,
+            skill_dir: None,
+            content: Some("Restricted".to_string()),
+        };
+        assert!(skill.disable_model_invocation);
+    }
+
+    #[test]
+    fn test_parse_frontmatter_with_model_inherit() {
+        let content = "---\nname: test\nmodel: inherit\n---\nBody content";
+        let (fm, _body) = parse_skill_frontmatter(content);
+        assert_eq!(fm.model, Some("inherit".to_string()));
+    }
+
+    #[test]
+    fn test_skill_get_with_slash_prefix() {
+        let manager = SkillManager::new();
+        assert!(manager.get_skill("/commit").is_some());
+        assert!(manager.get_skill("commit").is_some());
     }
 }

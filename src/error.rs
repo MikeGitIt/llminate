@@ -92,7 +92,7 @@ pub enum Error {
 
     #[error("Glob pattern error: {0}")]
     GlobPattern(#[from] glob::PatternError),
-    
+
     #[error("Cancelled: {0}")]
     Cancelled(String),
 
@@ -132,13 +132,16 @@ impl Error {
 
     /// Check if error should trigger retry
     pub fn should_retry(&self) -> bool {
-        matches!(self, Error::RateLimit(_) | Error::Http(_) | Error::Request(_))
+        matches!(
+            self,
+            Error::RateLimit(_) | Error::Http(_) | Error::Request(_)
+        )
     }
 
     /// Get retry delay in milliseconds
     pub fn retry_delay_ms(&self) -> Option<u64> {
         match self {
-            Error::RateLimit(_) => Some(60000), // 1 minute
+            Error::RateLimit(_) => Some(60000),               // 1 minute
             Error::Http(_) | Error::Request(_) => Some(5000), // 5 seconds
             _ => None,
         }
@@ -183,19 +186,19 @@ pub fn capture_error(error: &Error) {
     let mut event = Event::new();
     event.level = error.sentry_level();
     event.message = Some(error.to_string());
-    
+
     // Add error type as tag
     event.tags.insert(
         "error_type".to_string(),
         format!("{:?}", std::mem::discriminant(error)),
     );
-    
+
     // Add additional context
     event.extra.insert(
         "is_recoverable".to_string(),
         sentry::protocol::Value::Bool(error.is_recoverable()),
     );
-    
+
     sentry::capture_event(event);
 }
 
@@ -204,17 +207,17 @@ pub fn capture_error_with_context<C: fmt::Display>(error: &Error, context: C) {
     let mut event = Event::new();
     event.level = error.sentry_level();
     event.message = Some(format!("{}: {}", context, error));
-    
+
     event.tags.insert(
         "error_type".to_string(),
         format!("{:?}", std::mem::discriminant(error)),
     );
-    
+
     event.extra.insert(
         "context".to_string(),
         sentry::protocol::Value::String(context.to_string()),
     );
-    
+
     sentry::capture_event(event);
 }
 
@@ -276,7 +279,7 @@ impl<T> ResultExt<T> for Result<T> {
 /// Create an error event for panics
 pub fn create_panic_handler() {
     let default_panic = std::panic::take_hook();
-    
+
     std::panic::set_hook(Box::new(move |panic_info| {
         let payload = panic_info.payload();
         let message = if let Some(s) = payload.downcast_ref::<&str>() {
@@ -292,10 +295,7 @@ pub fn create_panic_handler() {
             .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
             .unwrap_or_else(|| "unknown".to_string());
 
-        sentry::capture_message(
-            &format!("Panic at {}: {}", location, message),
-            Level::Fatal,
-        );
+        sentry::capture_message(&format!("Panic at {}: {}", location, message), Level::Fatal);
 
         // Call the default panic handler
         default_panic(panic_info);

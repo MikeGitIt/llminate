@@ -1,7 +1,7 @@
-use clap::{Parser, Subcommand, Args, ValueEnum};
 use crate::config::ConfigScope;
-use crate::mcp::TransportType;
 use crate::error::Result;
+use crate::mcp::TransportType;
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use colored::Colorize;
 use std::path::PathBuf;
 
@@ -134,6 +134,12 @@ pub struct Cli {
     /// Enable automatic fallback to specified model when default model is overloaded (only works with --print)
     #[arg(long)]
     pub fallback_model: Option<String>,
+
+    /// Keep the process alive after the first response, reading subsequent prompts from stdin.
+    /// Only works with --print --output-format stream-json --input-format stream-json.
+    /// Used by editor integrations (e.g. Emacs) for long-lived sessions.
+    #[arg(long, hide = true)]
+    pub keep_alive: bool,
 
     /// Additional directories to allow tool access to
     #[arg(long, value_delimiter = ' ')]
@@ -337,9 +343,9 @@ impl Cli {
     pub fn to_logging_config(&self) -> crate::config::LoggingConfig {
         use crate::config::LoggingConfig;
         use std::collections::HashMap;
-        
+
         let mut module_levels = HashMap::new();
-        
+
         // Parse module levels from --log-modules "llminate=debug,hyper=warn"
         if let Some(modules_str) = &self.log_modules {
             for module_spec in modules_str.split(',') {
@@ -348,12 +354,20 @@ impl Cli {
                 }
             }
         }
-        
+
         LoggingConfig {
-            default_level: if self.debug { Some("debug".to_string()) } else { Some("info".to_string()) },
-            module_levels: if module_levels.is_empty() { None } else { Some(module_levels) },
+            default_level: if self.debug {
+                Some("debug".to_string())
+            } else {
+                Some("info".to_string())
+            },
+            module_levels: if module_levels.is_empty() {
+                None
+            } else {
+                Some(module_levels)
+            },
             enable_file_logging: Some(!self.print), // File logging in TUI mode, not in print mode
-            enable_stderr_logging: Some(self.stderr_logs), // Only enable stderr if explicitly requested
+            enable_stderr_logging: Some(self.stderr_logs || (self.print && self.debug)), /* In print mode, --debug auto-enables stderr logging */
             enable_json_logging: Some(self.json_logs),
             format_style: self.log_format.as_ref().map(|f| match f {
                 LogFormat::Compact => "compact".to_string(),
@@ -374,7 +388,7 @@ impl Cli {
     pub async fn execute(self) -> Result<()> {
         // Handle deprecated options
         let debug = self.debug || self.mcp_debug;
-        
+
         if self.mcp_debug {
             eprintln!("Warning: --mcp-debug is deprecated. Please use --debug instead.");
         }
@@ -410,7 +424,7 @@ impl Cli {
                     // No valid authentication found - run setup wizard
                     run_authentication_wizard().await?;
                 }
-                
+
                 // Main interactive session or print mode
                 handle_main_command(self, debug).await?;
             }
@@ -423,48 +437,86 @@ impl Cli {
 /// Handle config subcommands
 async fn handle_config_command(command: ConfigCommands) -> Result<()> {
     use crate::config;
-    
+
     match command {
         ConfigCommands::Get { key, global } => {
-            let scope = if global { ConfigScope::User } else { ConfigScope::Local };
+            let scope = if global {
+                ConfigScope::User
+            } else {
+                ConfigScope::Local
+            };
             let value = config::get_config_value(&key, scope)?;
             println!("{}", serde_json::to_string_pretty(&value)?);
         }
         ConfigCommands::Set { key, value, global } => {
-            let scope = if global { ConfigScope::User } else { ConfigScope::Local };
+            let scope = if global {
+                ConfigScope::User
+            } else {
+                ConfigScope::Local
+            };
             config::set_config_value(&key, &value, scope)?;
             println!("Set {} to {}", key, value);
         }
-        ConfigCommands::Remove { key, values, global } => {
-            let scope = if global { ConfigScope::User } else { ConfigScope::Local };
+        ConfigCommands::Remove {
+            key,
+            values,
+            global,
+        } => {
+            let scope = if global {
+                ConfigScope::User
+            } else {
+                ConfigScope::Local
+            };
             if values.is_empty() {
                 config::remove_config_value(&key, scope)?;
                 println!("Removed {}", key);
             } else {
                 config::remove_from_array(&key, &values, scope == ConfigScope::User)?;
-                println!("Removed from {} in {} config: {}", key, scope, values.join(", "));
+                println!(
+                    "Removed from {} in {} config: {}",
+                    key,
+                    scope,
+                    values.join(", ")
+                );
             }
         }
         ConfigCommands::List { global } => {
-            let scope = if global { ConfigScope::User } else { ConfigScope::Local };
+            let scope = if global {
+                ConfigScope::User
+            } else {
+                ConfigScope::Local
+            };
             let config = config::load_config(scope)?;
             println!("{}", serde_json::to_string_pretty(&config)?);
         }
-        ConfigCommands::Add { key, values, global } => {
-            let scope = if global { ConfigScope::User } else { ConfigScope::Local };
+        ConfigCommands::Add {
+            key,
+            values,
+            global,
+        } => {
+            let scope = if global {
+                ConfigScope::User
+            } else {
+                ConfigScope::Local
+            };
             let parsed_values = parse_array_values(values);
             config::add_to_array(&key, &parsed_values, scope == ConfigScope::User)?;
-            println!("Added to {} in {} config: {}", key, scope, parsed_values.join(", "));
+            println!(
+                "Added to {} in {} config: {}",
+                key,
+                scope,
+                parsed_values.join(", ")
+            );
         }
     }
-    
+
     Ok(())
 }
 
 /// Handle MCP subcommands
 async fn handle_mcp_command(command: McpCommands, debug: bool) -> Result<()> {
     use crate::mcp;
-    
+
     match command {
         McpCommands::Serve { debug, verbose } => {
             mcp::serve(debug, verbose).await?;
@@ -499,22 +551,22 @@ async fn handle_mcp_command(command: McpCommands, debug: bool) -> Result<()> {
             mcp::reset_project_choices().await?;
         }
     }
-    
+
     Ok(())
 }
 
 /// Handle migrate installer command
 async fn handle_migrate_installer() -> Result<()> {
     use crate::updater;
-    
+
     if updater::is_running_from_local() {
         println!("Already running from local installation. No migration needed.");
         return Ok(());
     }
-    
+
     // Track telemetry event
     crate::telemetry::track("tengu_migrate_installer_command", None::<serde_json::Value>).await;
-    
+
     // Interactive migration process
     println!("This will migrate llminate from a global npm installation to a local installation.");
     println!();
@@ -528,49 +580,57 @@ async fn handle_migrate_installer() -> Result<()> {
     println!("  2. Set up a shell alias");
     println!("  3. Optionally uninstall the global npm package");
     println!();
-    
+
     // Confirm migration
     if !confirm_action("Do you want to proceed with the migration?")? {
         println!("Migration cancelled.");
         return Ok(());
     }
-    
+
     // Perform migration
     updater::migrate_to_local().await?;
-    
+
     println!();
     println!("{}", "Migration completed successfully!".green());
     println!("Please restart your terminal or run the source command shown above.");
-    
+
     Ok(())
 }
 
 /// Handle doctor command
 async fn handle_doctor() -> Result<()> {
     use crate::updater;
-    
+
     // Track telemetry event
     crate::telemetry::track("tengu_doctor_command", None::<serde_json::Value>).await;
-    
+
     println!("{}", "llminate Doctor".bold());
     println!("{}", "================".dimmed());
     println!();
-    
+
     // Check version
     println!("Version: {}", crate::VERSION);
-    
+
     // Check installation type
     if updater::is_running_from_local() {
-        println!("Installation: {} ({})", "Local".green(), updater::get_local_installation_path().display());
+        println!(
+            "Installation: {} ({})",
+            "Local".green(),
+            updater::get_local_installation_path().display()
+        );
     } else {
         println!("Installation: {} (npm global)", "Global".yellow());
     }
-    
+
     // Check for updates
     match updater::check_for_updates().await {
         Ok(status) => {
             if status.update_available {
-                println!("Update available: {} -> {}", status.current_version, status.latest_version.green());
+                println!(
+                    "Update available: {} -> {}",
+                    status.current_version,
+                    status.latest_version.green()
+                );
             } else {
                 println!("Up to date: {}", status.current_version.green());
             }
@@ -579,14 +639,14 @@ async fn handle_doctor() -> Result<()> {
             println!("Update check: {} ({})", "Failed".red(), e);
         }
     }
-    
+
     // Check permissions
     match updater::can_update() {
         Ok(true) => println!("Update permissions: {}", "OK".green()),
         Ok(false) => println!("Update permissions: {} (may need sudo)", "Limited".yellow()),
         Err(e) => println!("Update permissions: {} ({})", "Error".red(), e),
     }
-    
+
     // Check MCP servers
     match crate::config::get_all_mcp_servers() {
         Ok(servers) => {
@@ -600,7 +660,7 @@ async fn handle_doctor() -> Result<()> {
             println!("MCP servers: {} ({})", "Error".red(), e);
         }
     }
-    
+
     // Check config files
     for scope in [ConfigScope::User, ConfigScope::Local, ConfigScope::Project] {
         match crate::config::load_config(scope) {
@@ -608,42 +668,58 @@ async fn handle_doctor() -> Result<()> {
             Err(_) => println!("{} config: {}", scope, "Not found".dimmed()),
         }
     }
-    
+
     println!();
     println!("{}", "Diagnostics complete.".green());
-    
+
     Ok(())
 }
 
 /// Handle update command
 async fn handle_update() -> Result<()> {
     use crate::updater::{self, UpdateResult};
-    
+
     println!("Checking for updates...");
-    
+
     match updater::check_and_update().await? {
         UpdateResult::Updated(version) => {
-            println!("{}", format!("Successfully updated to version {}", version).green());
+            println!(
+                "{}",
+                format!("Successfully updated to version {}", version).green()
+            );
             println!("Please restart llminate to use the new version.");
         }
         UpdateResult::AlreadyLatest => {
-            println!("You are already running the latest version ({}).", crate::VERSION);
+            println!(
+                "You are already running the latest version ({}).",
+                crate::VERSION
+            );
         }
         UpdateResult::UpdateAvailable(version) => {
-            println!("Update available: {} -> {}", crate::VERSION, version.yellow());
+            println!(
+                "Update available: {} -> {}",
+                crate::VERSION,
+                version.yellow()
+            );
             println!();
-            
+
             if updater::is_running_from_local() {
                 println!("To update, run: {}", "llminate update".cyan());
             } else {
-                println!("To update, run: {}", "npm install -g llminate@latest".cyan());
+                println!(
+                    "To update, run: {}",
+                    "npm install -g llminate@latest".cyan()
+                );
                 println!();
                 println!("Note: You may need to use sudo if you get permission errors.");
-                println!("Alternatively, migrate to a local installation with: {}", "llminate migrate-installer".cyan());
+                println!(
+                    "Alternatively, migrate to a local installation with: {}",
+                    "llminate migrate-installer".cyan()
+                );
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -652,10 +728,11 @@ async fn handle_main_command(cli: Cli, debug: bool) -> Result<()> {
     // Track telemetry
     if let Some(prompt) = &cli.prompt {
         if !prompt.trim().is_empty() {
-            crate::telemetry::track("tengu_main_command_with_prompt", None::<serde_json::Value>).await;
+            crate::telemetry::track("tengu_main_command_with_prompt", None::<serde_json::Value>)
+                .await;
         }
     }
-    
+
     if cli.print {
         // Non-interactive print mode
         handle_print_mode(cli, debug).await?;
@@ -663,14 +740,14 @@ async fn handle_main_command(cli: Cli, debug: bool) -> Result<()> {
         // Interactive TUI mode
         handle_interactive_mode(cli, debug).await?;
     }
-    
+
     Ok(())
 }
 
 /// Handle print mode (non-interactive)
 async fn handle_print_mode(cli: Cli, debug: bool) -> Result<()> {
     use crate::tui::print_mode;
-    
+
     let options = print_mode::PrintOptions {
         prompt: cli.prompt,
         output_format: match cli.output_format {
@@ -702,15 +779,16 @@ async fn handle_print_mode(cli: Cli, debug: bool) -> Result<()> {
         mcp_config: cli.mcp_config,
         permission_prompt_tool: cli.permission_prompt_tool,
         dangerously_skip_permissions: cli.dangerously_skip_permissions,
+        keep_alive: cli.keep_alive,
     };
-    
+
     print_mode::run(options).await
 }
 
 /// Handle interactive mode (TUI)
 async fn handle_interactive_mode(cli: Cli, debug: bool) -> Result<()> {
     use crate::tui::interactive_mode;
-    
+
     let options = interactive_mode::InteractiveOptions {
         initial_prompt: cli.prompt,
         debug,
@@ -724,7 +802,7 @@ async fn handle_interactive_mode(cli: Cli, debug: bool) -> Result<()> {
         mcp_config: cli.mcp_config,
         dangerously_skip_permissions: cli.dangerously_skip_permissions,
     };
-    
+
     interactive_mode::run(options).await
 }
 
@@ -741,30 +819,30 @@ fn parse_array_values(values: Vec<String>) -> Vec<String> {
 /// Confirm an action with the user
 fn confirm_action(message: &str) -> Result<bool> {
     use std::io::{self, Write};
-    
+
     print!("{} [y/N] ", message);
     io::stdout().flush()?;
-    
+
     let mut input = String::new();
     io::stdin().read_line(&mut input)?;
-    
+
     Ok(matches!(input.trim().to_lowercase().as_str(), "y" | "yes"))
 }
 
 /// Run authentication setup wizard matching JavaScript tool behavior
 async fn run_authentication_wizard() -> Result<()> {
     use std::io::{self, Write};
-    
+
     println!("🚀 Welcome to Claude Code!");
     println!();
     println!("It looks like this is your first time using Claude Code.");
     println!("Let's set up your authentication so you can start chatting with Claude.");
     println!();
-    
+
     // Check if Claude Desktop is available
     let mut auth_manager = crate::auth::AuthManager::new()?;
     let desktop_available = auth_manager.is_desktop_available().await;
-    
+
     if desktop_available {
         println!("🎉 I found Claude Desktop on your system!");
         println!();
@@ -779,14 +857,14 @@ async fn run_authentication_wizard() -> Result<()> {
         println!("   - Charges based on usage");
         println!("   - Good for developers with API credits");
         println!();
-        
+
         loop {
             print!("Which option would you like to use? [1/2]: ");
             io::stdout().flush()?;
-            
+
             let mut choice = String::new();
             io::stdin().read_line(&mut choice)?;
-            
+
             match choice.trim() {
                 "1" => {
                     println!();
@@ -797,7 +875,9 @@ async fn run_authentication_wizard() -> Result<()> {
                     match setup_oauth_auth(&mut auth_manager).await {
                         Ok(_) => {
                             println!("✅ OAuth authentication set up successfully!");
-                            println!("You're ready to start using Claude Code with your subscription.");
+                            println!(
+                                "You're ready to start using Claude Code with your subscription."
+                            );
                         }
                         Err(e) => {
                             println!("❌ OAuth authentication failed: {}", e);
@@ -825,55 +905,55 @@ async fn run_authentication_wizard() -> Result<()> {
         println!();
         setup_api_key_auth(&mut auth_manager).await?;
     }
-    
+
     println!();
     println!("🎉 Authentication setup complete!");
     println!("You're now ready to use Claude Code. Enjoy!");
     println!();
-    
+
     Ok(())
 }
 
 /// Set up API key authentication
 async fn setup_api_key_auth(auth_manager: &mut crate::auth::AuthManager) -> Result<()> {
     use std::io::{self, Write};
-    
+
     println!("To use an Anthropic API key, you'll need to:");
     println!("1. Sign up for an Anthropic account at https://console.anthropic.com");
     println!("2. Generate an API key in your account settings");
     println!("3. Add credits to your account for usage");
     println!();
-    
+
     loop {
         print!("Please enter your Anthropic API key: ");
         io::stdout().flush()?;
-        
+
         let mut api_key = String::new();
         io::stdin().read_line(&mut api_key)?;
         let api_key = api_key.trim().to_string();
-        
+
         if api_key.is_empty() {
             println!("API key cannot be empty. Please try again.");
             continue;
         }
-        
+
         if !api_key.starts_with("sk-ant-") {
             println!("⚠️  Warning: Your API key doesn't look like a standard Anthropic API key.");
             println!("   Anthropic API keys typically start with 'sk-ant-'");
             println!();
-            
+
             if !confirm_action("Do you want to continue with this key anyway?")? {
                 continue;
             }
         }
-        
+
         println!();
         println!("Testing your API key...");
-        
+
         // Test the API key
         let auth_method = crate::auth::AuthMethod::ApiKey(api_key.clone());
         auth_manager.set_auth(auth_method);
-        
+
         match auth_manager.verify_auth().await {
             Ok(true) => {
                 // Save the working API key
@@ -883,12 +963,14 @@ async fn setup_api_key_auth(auth_manager: &mut crate::auth::AuthManager) -> Resu
             }
             Ok(false) | Err(_) => {
                 println!("❌ API key verification failed.");
-                println!("   Please check that your key is correct and you have credits available.");
+                println!(
+                    "   Please check that your key is correct and you have credits available."
+                );
                 println!();
 
                 if !confirm_action("Would you like to try a different API key?")? {
                     return Err(crate::error::Error::Authentication(
-                        "API key setup cancelled by user".to_string()
+                        "API key setup cancelled by user".to_string(),
                     ));
                 }
             }
@@ -900,7 +982,7 @@ async fn setup_api_key_auth(auth_manager: &mut crate::auth::AuthManager) -> Resu
 
 /// Set up OAuth authentication (Claude Desktop / Claude.ai)
 async fn setup_oauth_auth(auth_manager: &mut crate::auth::AuthManager) -> Result<()> {
-    use crate::oauth::{OAuthManager, OAuthCredential};
+    use crate::oauth::{OAuthCredential, OAuthManager};
 
     println!("Starting OAuth authentication...");
     println!();
@@ -909,19 +991,26 @@ async fn setup_oauth_auth(auth_manager: &mut crate::auth::AuthManager) -> Result
     let mut oauth_manager = OAuthManager::new();
 
     // Generate auth URL (use console.anthropic.com for CLI, not claude.ai)
-    let auth_url = oauth_manager.start_oauth_flow(false).await
-        .map_err(|e| crate::error::Error::Authentication(format!("Failed to start OAuth flow: {}", e)))?;
+    let auth_url = oauth_manager.start_oauth_flow(false).await.map_err(|e| {
+        crate::error::Error::Authentication(format!("Failed to start OAuth flow: {}", e))
+    })?;
 
     println!("Starting callback server and opening browser...");
     println!();
 
     // Start callback server, open browser, and wait for callback
     // This matches JavaScript's automatic flow (cli-jsdef-fixed.js lines 393485-393507)
-    let (code, _state) = oauth_manager.start_callback_server(Some(&auth_url)).await
-        .map_err(|e| crate::error::Error::Authentication(format!("OAuth callback failed: {}", e)))?;
+    let (code, _state) = oauth_manager
+        .start_callback_server(Some(&auth_url))
+        .await
+        .map_err(|e| {
+            crate::error::Error::Authentication(format!("OAuth callback failed: {}", e))
+        })?;
 
     if code.is_empty() {
-        return Err(crate::error::Error::Authentication("OAuth authentication failed - no code received".to_string()));
+        return Err(crate::error::Error::Authentication(
+            "OAuth authentication failed - no code received".to_string(),
+        ));
     }
 
     println!("Authorization received! Processing...");
@@ -931,26 +1020,53 @@ async fn setup_oauth_auth(auth_manager: &mut crate::auth::AuthManager) -> Result
     // JavaScript (cli-jsdef-fixed.js lines 400798-400821):
     // - If token has 'user:inference' scope, use OAuth token directly (Claude Max)
     // - Otherwise, create an API key (Console login)
-    let credential = oauth_manager.exchange_code_for_credential(&code).await
-        .map_err(|e| crate::error::Error::Authentication(format!("Failed to exchange code: {}", e)))?;
+    let credential = oauth_manager
+        .exchange_code_for_credential(&code)
+        .await
+        .map_err(|e| {
+            crate::error::Error::Authentication(format!("Failed to exchange code: {}", e))
+        })?;
 
     match credential {
         OAuthCredential::ApiKey(api_key) => {
             // Console login path - save as API key
-            auth_manager.save_api_key_from_oauth(&api_key).await
-                .map_err(|e| crate::error::Error::Authentication(format!("Failed to save API key: {}", e)))?;
+            auth_manager
+                .save_api_key_from_oauth(&api_key)
+                .await
+                .map_err(|e| {
+                    crate::error::Error::Authentication(format!("Failed to save API key: {}", e))
+                })?;
 
             // Also set in environment for current session
             std::env::set_var("ANTHROPIC_API_KEY", &api_key);
 
             println!("✅ API key created and saved successfully!");
         }
-        OAuthCredential::OAuthToken { access_token, refresh_token, expires_in, scopes, account_uuid } => {
+        OAuthCredential::OAuthToken {
+            access_token,
+            refresh_token,
+            expires_in,
+            scopes,
+            account_uuid,
+        } => {
             // Claude Max path - save as OAuth token with accountUuid
             // The token is used directly with Bearer auth
             // accountUuid is CRITICAL for metadata user_id construction
-            auth_manager.save_oauth_token(&access_token, &refresh_token, expires_in, &scopes, account_uuid.as_deref()).await
-                .map_err(|e| crate::error::Error::Authentication(format!("Failed to save OAuth token: {}", e)))?;
+            auth_manager
+                .save_oauth_token(
+                    &access_token,
+                    &refresh_token,
+                    expires_in,
+                    &scopes,
+                    account_uuid.as_deref(),
+                )
+                .await
+                .map_err(|e| {
+                    crate::error::Error::Authentication(format!(
+                        "Failed to save OAuth token: {}",
+                        e
+                    ))
+                })?;
 
             // Set the token in environment for current session
             // Note: This uses a different env var than API key
@@ -985,9 +1101,7 @@ async fn handle_mcp_cli_mode(prompt: Option<String>) -> Result<()> {
     }
 
     match parts[0] {
-        "servers" => {
-            handle_mcp_cli_servers().await
-        }
+        "servers" => handle_mcp_cli_servers().await,
         "tools" => {
             let server = parts.get(1).map(|s| s.to_string());
             handle_mcp_cli_tools(server).await
@@ -996,14 +1110,18 @@ async fn handle_mcp_cli_mode(prompt: Option<String>) -> Result<()> {
             if parts.len() < 2 {
                 eprintln!("Error: Usage: mcp-cli info <server>/<tool>");
                 eprintln!("Example: mcp-cli info myserver/my_tool");
-                return Err(crate::error::Error::InvalidInput("Missing tool path".to_string()));
+                return Err(crate::error::Error::InvalidInput(
+                    "Missing tool path".to_string(),
+                ));
             }
             handle_mcp_cli_info(parts[1]).await
         }
         "grep" => {
             if parts.len() < 2 {
                 eprintln!("Error: Usage: mcp-cli grep <pattern>");
-                return Err(crate::error::Error::InvalidInput("Missing search pattern".to_string()));
+                return Err(crate::error::Error::InvalidInput(
+                    "Missing search pattern".to_string(),
+                ));
             }
             let pattern = parts[1..].join(" ");
             handle_mcp_cli_grep(&pattern).await
@@ -1015,14 +1133,18 @@ async fn handle_mcp_cli_mode(prompt: Option<String>) -> Result<()> {
         "read" => {
             if parts.len() < 2 {
                 eprintln!("Error: Usage: mcp-cli read <server>/<resource>");
-                return Err(crate::error::Error::InvalidInput("Missing resource path".to_string()));
+                return Err(crate::error::Error::InvalidInput(
+                    "Missing resource path".to_string(),
+                ));
             }
             handle_mcp_cli_read(parts[1]).await
         }
         "call" => {
             if parts.len() < 2 {
                 eprintln!("Error: Usage: mcp-cli call <server>/<tool> '<json>'");
-                return Err(crate::error::Error::InvalidInput("Missing tool path".to_string()));
+                return Err(crate::error::Error::InvalidInput(
+                    "Missing tool path".to_string(),
+                ));
             }
             let tool_path = parts[1].to_string();
             // The args can be either:
@@ -1050,7 +1172,10 @@ async fn handle_mcp_cli_mode(prompt: Option<String>) -> Result<()> {
         unknown => {
             eprintln!("Unknown mcp-cli command: {}", unknown);
             print_mcp_cli_help();
-            Err(crate::error::Error::InvalidInput(format!("Unknown command: {}", unknown)))
+            Err(crate::error::Error::InvalidInput(format!(
+                "Unknown command: {}",
+                unknown
+            )))
         }
     }
 }
@@ -1146,8 +1271,9 @@ async fn handle_mcp_cli_info(tool_path: &str) -> Result<()> {
     let (server_name, tool_name) = parse_tool_path(tool_path)?;
 
     let servers = crate::config::get_all_mcp_servers()?;
-    let config = servers.get(&server_name)
-        .ok_or_else(|| crate::error::Error::NotFound(format!("Server not found: {}", server_name)))?;
+    let config = servers.get(&server_name).ok_or_else(|| {
+        crate::error::Error::NotFound(format!("Server not found: {}", server_name))
+    })?;
 
     match connect_and_get_tool_info(&server_name, config, &tool_name).await {
         Ok(tool) => {
@@ -1236,8 +1362,9 @@ async fn handle_mcp_cli_read(resource_path: &str) -> Result<()> {
     let (server_name, resource_uri) = parse_tool_path(resource_path)?;
 
     let servers = crate::config::get_all_mcp_servers()?;
-    let config = servers.get(&server_name)
-        .ok_or_else(|| crate::error::Error::NotFound(format!("Server not found: {}", server_name)))?;
+    let config = servers.get(&server_name).ok_or_else(|| {
+        crate::error::Error::NotFound(format!("Server not found: {}", server_name))
+    })?;
 
     match connect_and_read_resource(&server_name, config, &resource_uri).await {
         Ok(content) => {
@@ -1257,8 +1384,9 @@ async fn handle_mcp_cli_call(tool_path: &str, args: Option<String>) -> Result<()
     let (server_name, tool_name) = parse_tool_path(tool_path)?;
 
     let servers = crate::config::get_all_mcp_servers()?;
-    let config = servers.get(&server_name)
-        .ok_or_else(|| crate::error::Error::NotFound(format!("Server not found: {}", server_name)))?;
+    let config = servers.get(&server_name).ok_or_else(|| {
+        crate::error::Error::NotFound(format!("Server not found: {}", server_name))
+    })?;
 
     // Parse JSON args
     let input: serde_json::Value = if let Some(json_str) = args {
@@ -1285,9 +1413,10 @@ async fn handle_mcp_cli_call(tool_path: &str, args: Option<String>) -> Result<()
 fn parse_tool_path(path: &str) -> Result<(String, String)> {
     let parts: Vec<&str> = path.splitn(2, '/').collect();
     if parts.len() != 2 {
-        return Err(crate::error::Error::InvalidInput(
-            format!("Invalid path format: {}. Expected format: <server>/<tool>", path)
-        ));
+        return Err(crate::error::Error::InvalidInput(format!(
+            "Invalid path format: {}. Expected format: <server>/<tool>",
+            path
+        )));
     }
     Ok((parts[0].to_string(), parts[1].to_string()))
 }
@@ -1310,7 +1439,8 @@ async fn connect_and_get_tool_info(
     let mut client = crate::mcp::connect_and_initialize(server_name, config).await?;
     let tools = client.list_tools().await?;
 
-    tools.into_iter()
+    tools
+        .into_iter()
         .find(|t| t.name == tool_name)
         .ok_or_else(|| crate::error::Error::NotFound(format!("Tool not found: {}", tool_name)))
 }

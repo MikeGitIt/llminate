@@ -1,10 +1,10 @@
 /// GitHub-related prompts for PR comments and code review
-/// 
+///
 /// This module contains the exact prompts extracted from the JavaScript implementation
 /// for GitHub PR operations.
 
 /// Returns the prompt for fetching GitHub PR comments
-/// 
+///
 /// This prompt provides instructions for:
 /// - Fetching PR comments using gh CLI commands
 /// - Using GitHub API endpoints for PR and review comments
@@ -53,7 +53,7 @@ Remember:
 }
 
 /// Returns the prompt for expert code review
-/// 
+///
 /// This prompt provides instructions for:
 /// - Analyzing GitHub PRs with thorough code review
 /// - Using gh CLI to get PR details and diffs
@@ -96,8 +96,10 @@ mod tests {
     #[test]
     fn test_pr_comments_prompt_without_input() {
         let prompt = get_pr_comments_prompt(None);
-        
-        assert!(prompt.contains("You are an AI assistant integrated into a git-based version control system"));
+
+        assert!(prompt.contains(
+            "You are an AI assistant integrated into a git-based version control system"
+        ));
         assert!(prompt.contains("Follow these steps:"));
         assert!(prompt.contains("gh pr view --json number,headRepository"));
         assert!(prompt.contains("## Comments"));
@@ -107,15 +109,17 @@ mod tests {
     #[test]
     fn test_pr_comments_prompt_with_input() {
         let prompt = get_pr_comments_prompt(Some("Show only recent comments"));
-        
-        assert!(prompt.contains("You are an AI assistant integrated into a git-based version control system"));
+
+        assert!(prompt.contains(
+            "You are an AI assistant integrated into a git-based version control system"
+        ));
         assert!(prompt.contains("Additional user input: Show only recent comments"));
     }
 
     #[test]
     fn test_code_review_prompt_without_pr() {
         let prompt = get_code_review_prompt(None);
-        
+
         assert!(prompt.contains("You are an expert code reviewer"));
         assert!(prompt.contains("Follow these steps:"));
         assert!(prompt.contains("gh pr list"));
@@ -126,7 +130,7 @@ mod tests {
     #[test]
     fn test_code_review_prompt_with_pr() {
         let prompt = get_code_review_prompt(Some("123"));
-        
+
         assert!(prompt.contains("You are an expert code reviewer"));
         assert!(prompt.contains("PR number: 123"));
     }

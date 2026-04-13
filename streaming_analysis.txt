@@ -1,0 +1,76 @@
+CRITICAL STREAMING PIPELINE ISSUE - EnterPlanMode Empty Input Buffer
+
+=== ISSUE SUMMARY ===
+When EnterPlanMode (which has an empty input schema with no properties) is called:
+1. The API sends ContentBlockStart with: ToolUse { id, name, input: {} }
+2. The code IGNORES the initial input field (line 110/396 in streaming.rs use ".." pattern)
+3. tool_input_buffer starts as EMPTY (cleared on line 112)
+4. For tools with empty inputs, NO InputJsonDelta events arrive from the API
+5. At ContentBlockStop, tool_input_buffer is still EMPTY
+6. serde_json::from_str("") fails, sending Error event instead of ToolUseComplete
+
+=== FLOW ANALYSIS ===
+
+Current Code Path (BROKEN):
+┌─ ContentBlockStart {ToolUse { id, name, input: {} }}
+├─ Code does: tool_input_buffer.clear() (now empty!)
+├─ Code ignores initial input field with ".." pattern
+├─ No InputJsonDelta arrives (API doesn't send for empty input)
+├─ tool_input_buffer remains EMPTY STRING ""
+└─ ContentBlockStop
+   └─ serde_json::from_str("") → ERROR: EOF while parsing
+      → Sends StreamingUpdate::Error instead of ToolUseComplete
+      → Tool never executes!
+
+Correct Code Path (NEEDS FIX):
+┌─ ContentBlockStart {ToolUse { id, name, input }}
+├─ Capture initial input if NOT empty
+├─ If input is {}, can skip waiting for InputJsonDelta
+├─ If no InputJsonDelta arrives by ContentBlockStop, use captured input
+├─ Only parse tool_input_buffer if it has content
+└─ Otherwise use initial input from ContentBlockStart
+
+=== ANTHROPIC API BEHAVIOR ===
+
+For tools with empty input schema:
+- Sends: content_block_start with input: {}
+- Does NOT send input_json_delta 
+- Sends: content_block_stop
+
+For tools with input schema (e.g., Bash):
+- Sends: content_block_start with input: {} (initial empty)
+- Sends: content_block_delta with partial JSON chunks
+- Sends: content_block_stop
+
+=== TWO CODE PATHS WITH SAME BUG ===
+
+1. StreamingHandler::process_stream (lines 66-218)
+   - Line 110-112: Ignores initial input, clears buffer
+   - Line 150: Tries to parse empty buffer
+   - Line 157-161: Sends Error instead of completion
+
+2. StreamProcessor::process (lines 378-497)
+   - Line 396-397: Ignores initial input
+   - Line 437: Tries to parse empty buffer
+   - Line 442-445: Sends Error instead of completion
+
+=== THE FIX ===
+
+Both code paths need to:
+1. Capture initial input: serde_json::Value from ContentBlockStart
+2. Initialize buffer with serialized initial input (or empty for {})
+3. Accumulate InputJsonDelta chunks ON TOP of initial input
+4. At ContentBlockStop, use final buffer or fallback to initial input
+
+OR simpler approach:
+1. If tool_input_buffer is empty after loop, use initial input
+2. Only try to parse if buffer is non-empty
+3. Handle both: partial JSON in buffer OR empty buffer with {} initial
+
+=== CURRENT SYMPTOM ===
+EnterPlanMode always gets:
+  StreamingUpdate::Error("Failed to parse tool input: EOF while parsing")
+Instead of:
+  StreamingUpdate::ToolUseComplete { id, input: {} }
+
+The tool handler's execute() method never gets called, so plan mode is never entered.

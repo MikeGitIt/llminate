@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::debug;
 
-use super::{Credentials, CredentialProvider, CredentialsProviderError};
+use super::{CredentialProvider, Credentials, CredentialsProviderError};
 
 /// Cognito Identity credentials parameters (matches JavaScript fromCognitoIdentity)
 #[derive(Debug)]
@@ -71,11 +71,17 @@ impl std::fmt::Debug for LoginProvider {
 #[async_trait]
 pub trait CognitoIdentityClient: Send + Sync + std::fmt::Debug {
     /// Get credentials for identity
-    async fn get_credentials_for_identity(&self, params: &GetCredentialsForIdentityParams) -> Result<CognitoCredentialsResponse>;
+    async fn get_credentials_for_identity(
+        &self,
+        params: &GetCredentialsForIdentityParams,
+    ) -> Result<CognitoCredentialsResponse>;
     /// Get identity ID
     async fn get_id(&self, params: &GetIdParams) -> Result<GetIdResponse>;
     /// Get OpenID token
-    async fn get_open_id_token(&self, params: &GetOpenIdTokenParams) -> Result<GetOpenIdTokenResponse>;
+    async fn get_open_id_token(
+        &self,
+        params: &GetOpenIdTokenParams,
+    ) -> Result<GetOpenIdTokenResponse>;
 }
 
 /// Trait for Cognito caching - stores Identity IDs only, not credentials
@@ -149,7 +155,8 @@ fn from_configs(
     parent_client_config: Option<&HashMap<String, String>>,
     caller_client_config: Option<&HashMap<String, String>>,
 ) -> Option<String> {
-    client_config.and_then(|c| c.get(key))
+    client_config
+        .and_then(|c| c.get(key))
         .or_else(|| parent_client_config.and_then(|c| c.get(key)))
         .or_else(|| caller_client_config.and_then(|c| c.get(key)))
         .cloned()
@@ -184,7 +191,10 @@ impl HttpCognitoIdentityClient {
 
 #[async_trait]
 impl CognitoIdentityClient for HttpCognitoIdentityClient {
-    async fn get_credentials_for_identity(&self, params: &GetCredentialsForIdentityParams) -> Result<CognitoCredentialsResponse> {
+    async fn get_credentials_for_identity(
+        &self,
+        params: &GetCredentialsForIdentityParams,
+    ) -> Result<CognitoCredentialsResponse> {
         let client = reqwest::Client::new();
 
         let mut request_body = serde_json::json!({
@@ -201,7 +211,10 @@ impl CognitoIdentityClient for HttpCognitoIdentityClient {
 
         let response = client
             .post(&format!("{}/", self.base_url))
-            .header("X-Amz-Target", "AWSCognitoIdentityService.GetCredentialsForIdentity")
+            .header(
+                "X-Amz-Target",
+                "AWSCognitoIdentityService.GetCredentialsForIdentity",
+            )
             .header("Content-Type", "application/x-amz-json-1.1")
             .json(&request_body)
             .send()
@@ -210,14 +223,20 @@ impl CognitoIdentityClient for HttpCognitoIdentityClient {
 
         if !response.status().is_success() {
             let status = response.status();
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             return Err(CredentialsProviderError::new(format!(
                 "GetCredentialsForIdentity failed: {} - {}",
                 status, error_text
-            )).into());
+            ))
+            .into());
         }
 
-        let response_data: serde_json::Value = response.json().await
+        let response_data: serde_json::Value = response
+            .json()
+            .await
             .context("Failed to parse GetCredentialsForIdentity response")?;
 
         // Use thrower pattern like JavaScript (exact match)
@@ -285,26 +304,39 @@ impl CognitoIdentityClient for HttpCognitoIdentityClient {
 
         if !response.status().is_success() {
             let status = response.status();
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             return Err(CredentialsProviderError::new(format!(
                 "GetId failed: {} - {}",
                 status, error_text
-            )).into());
+            ))
+            .into());
         }
 
-        let response_data: serde_json::Value = response.json().await
+        let response_data: serde_json::Value = response
+            .json()
+            .await
             .context("Failed to parse GetId response")?;
 
         let identity_id = response_data
             .get("IdentityId")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| CredentialsProviderError::new("Identity ID is missing from the response of GetId operation."))?
+            .ok_or_else(|| {
+                CredentialsProviderError::new(
+                    "Identity ID is missing from the response of GetId operation.",
+                )
+            })?
             .to_string();
 
         Ok(GetIdResponse { identity_id })
     }
 
-    async fn get_open_id_token(&self, params: &GetOpenIdTokenParams) -> Result<GetOpenIdTokenResponse> {
+    async fn get_open_id_token(
+        &self,
+        params: &GetOpenIdTokenParams,
+    ) -> Result<GetOpenIdTokenResponse> {
         let client = reqwest::Client::new();
 
         let mut request_body = serde_json::json!({
@@ -326,20 +358,30 @@ impl CognitoIdentityClient for HttpCognitoIdentityClient {
 
         if !response.status().is_success() {
             let status = response.status();
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             return Err(CredentialsProviderError::new(format!(
                 "GetOpenIdToken failed: {} - {}",
                 status, error_text
-            )).into());
+            ))
+            .into());
         }
 
-        let response_data: serde_json::Value = response.json().await
+        let response_data: serde_json::Value = response
+            .json()
+            .await
             .context("Failed to parse GetOpenIdToken response")?;
 
         let token = response_data
             .get("Token")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| CredentialsProviderError::new("Open ID token is missing from the response of GetOpenIdToken operation."))?
+            .ok_or_else(|| {
+                CredentialsProviderError::new(
+                    "Open ID token is missing from the response of GetOpenIdToken operation.",
+                )
+            })?
             .to_string();
 
         Ok(GetOpenIdTokenResponse { token })
@@ -347,7 +389,14 @@ impl CognitoIdentityClient for HttpCognitoIdentityClient {
 }
 
 /// Create Cognito Identity credentials provider function (matches JavaScript fromCognitoIdentity exactly)
-pub fn from_cognito_identity(params: CognitoIdentityParams) -> impl for<'a> Fn(Option<&'a HashMap<String, String>>) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Credentials>> + Send + 'a>> + Send + Sync {
+pub fn from_cognito_identity(
+    params: CognitoIdentityParams,
+) -> impl for<'a> Fn(
+    Option<&'a HashMap<String, String>>,
+) -> std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<Credentials>> + Send + 'a>,
+> + Send
+       + Sync {
     move |caller_client_config| {
         let params = CognitoIdentityParams {
             client: None, // Can't clone Box<dyn CognitoIdentityClient>
@@ -371,7 +420,8 @@ pub fn from_cognito_identity(params: CognitoIdentityParams) -> impl for<'a> Fn(O
                     params.client_config.as_ref(),
                     params.parent_client_config.as_ref(),
                     caller_client_config,
-                ).unwrap_or_else(|| "us-east-1".to_string());
+                )
+                .unwrap_or_else(|| "us-east-1".to_string());
                 Box::new(HttpCognitoIdentityClient::new(region))
             });
 
@@ -383,11 +433,13 @@ pub fn from_cognito_identity(params: CognitoIdentityParams) -> impl for<'a> Fn(O
             };
 
             // Call GetCredentialsForIdentity (matches JavaScript API call)
-            let response = client.get_credentials_for_identity(&GetCredentialsForIdentityParams {
-                identity_id: params.identity_id.clone(),
-                logins: resolved_logins,
-                custom_role_arn: params.custom_role_arn.clone(),
-            }).await?;
+            let response = client
+                .get_credentials_for_identity(&GetCredentialsForIdentityParams {
+                    identity_id: params.identity_id.clone(),
+                    logins: resolved_logins,
+                    custom_role_arn: params.custom_role_arn.clone(),
+                })
+                .await?;
 
             // Return credentials with exact JavaScript structure
             Ok(Credentials {
@@ -405,18 +457,28 @@ pub fn from_cognito_identity(params: CognitoIdentityParams) -> impl for<'a> Fn(O
 }
 
 /// Create Cognito Identity Pool credentials provider function (matches JavaScript fromCognitoIdentityPool exactly)
-pub fn from_cognito_identity_pool(params: CognitoIdentityPoolParams) -> impl for<'a> Fn(Option<&'a HashMap<String, String>>) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Credentials>> + Send + 'a>> + Send + Sync {
+pub fn from_cognito_identity_pool(
+    params: CognitoIdentityPoolParams,
+) -> impl for<'a> Fn(
+    Option<&'a HashMap<String, String>>,
+) -> std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<Credentials>> + Send + 'a>,
+> + Send
+       + Sync {
     let user_identifier = params.user_identifier.as_deref().unwrap_or("").to_string();
     let cache_key = if user_identifier.is_empty() {
         format!("amazon-cognito-identity-js:{}", params.identity_pool_id)
     } else {
-        format!("amazon-cognito-identity-js:{}:{}", params.identity_pool_id, user_identifier)
+        format!(
+            "amazon-cognito-identity-js:{}:{}",
+            params.identity_pool_id, user_identifier
+        )
     };
 
     move |caller_client_config| {
         let params = CognitoIdentityPoolParams {
             account_id: params.account_id.clone(),
-            cache: None, // Can't clone Box<dyn CognitoCache>
+            cache: None,  // Can't clone Box<dyn CognitoCache>
             client: None, // Can't clone Box<dyn CognitoIdentityClient>
             custom_role_arn: params.custom_role_arn.clone(),
             identity_pool_id: params.identity_pool_id.clone(),
@@ -430,7 +492,9 @@ pub fn from_cognito_identity_pool(params: CognitoIdentityPoolParams) -> impl for
 
         Box::pin(async move {
             if let Some(ref logger) = params.logger {
-                logger.debug("@aws-sdk/credential-provider-cognito-identity - fromCognitoIdentityPool");
+                logger.debug(
+                    "@aws-sdk/credential-provider-cognito-identity - fromCognitoIdentityPool",
+                );
             }
 
             // Note: In JavaScript, the cache stores identity IDs, not credentials
@@ -442,11 +506,12 @@ pub fn from_cognito_identity_pool(params: CognitoIdentityPoolParams) -> impl for
                 params.client_config.as_ref(),
                 params.parent_client_config.as_ref(),
                 caller_client_config,
-            ).unwrap_or_else(|| "us-east-1".to_string());
+            )
+            .unwrap_or_else(|| "us-east-1".to_string());
 
-            let client = params.client.unwrap_or_else(|| {
-                Box::new(HttpCognitoIdentityClient::new(region.clone()))
-            });
+            let client = params
+                .client
+                .unwrap_or_else(|| Box::new(HttpCognitoIdentityClient::new(region.clone())));
 
             // Resolve logins (matches JavaScript resolveLogins)
             let resolved_logins = if let Some(ref logins) = params.logins {
@@ -456,17 +521,21 @@ pub fn from_cognito_identity_pool(params: CognitoIdentityPoolParams) -> impl for
             };
 
             // GetId operation (matches JavaScript)
-            let get_id_response = client.get_id(&GetIdParams {
-                account_id: params.account_id.clone(),
-                identity_pool_id: params.identity_pool_id.clone(),
-                logins: resolved_logins.clone(),
-            }).await?;
+            let get_id_response = client
+                .get_id(&GetIdParams {
+                    account_id: params.account_id.clone(),
+                    identity_pool_id: params.identity_pool_id.clone(),
+                    logins: resolved_logins.clone(),
+                })
+                .await?;
 
             // GetOpenIdToken operation (matches JavaScript)
-            let get_token_response = client.get_open_id_token(&GetOpenIdTokenParams {
-                identity_id: get_id_response.identity_id.clone(),
-                logins: resolved_logins.clone(),
-            }).await?;
+            let get_token_response = client
+                .get_open_id_token(&GetOpenIdTokenParams {
+                    identity_id: get_id_response.identity_id.clone(),
+                    logins: resolved_logins.clone(),
+                })
+                .await?;
 
             // Create enhanced logins with the OpenID token (matches JavaScript)
             let mut enhanced_logins = resolved_logins.unwrap_or_default();
@@ -479,7 +548,12 @@ pub fn from_cognito_identity_pool(params: CognitoIdentityPoolParams) -> impl for
             let cognito_identity_fn = from_cognito_identity(CognitoIdentityParams {
                 client: Some(Box::new(HttpCognitoIdentityClient::new(region))),
                 identity_id: get_id_response.identity_id,
-                logins: Some(enhanced_logins.into_iter().map(|(k, v)| (k, LoginProvider::Token(v))).collect()),
+                logins: Some(
+                    enhanced_logins
+                        .into_iter()
+                        .map(|(k, v)| (k, LoginProvider::Token(v)))
+                        .collect(),
+                ),
                 custom_role_arn: params.custom_role_arn.clone(),
                 client_config: params.client_config.clone(),
                 parent_client_config: params.parent_client_config.clone(),
@@ -507,9 +581,13 @@ pub struct CognitoIdentityCredentialsProvider {
 
 impl CognitoIdentityCredentialsProvider {
     pub fn new(params: CognitoIdentityParams) -> Self {
-        let client: Arc<dyn CognitoIdentityClient> = params.client
+        let client: Arc<dyn CognitoIdentityClient> = params
+            .client
             .map(|c| Arc::from(c) as Arc<dyn CognitoIdentityClient>)
-            .unwrap_or_else(|| Arc::new(HttpCognitoIdentityClient::new("us-east-1".to_string())) as Arc<dyn CognitoIdentityClient>);
+            .unwrap_or_else(|| {
+                Arc::new(HttpCognitoIdentityClient::new("us-east-1".to_string()))
+                    as Arc<dyn CognitoIdentityClient>
+            });
 
         Self {
             client,
@@ -525,7 +603,9 @@ impl CognitoIdentityCredentialsProvider {
 impl CredentialProvider for CognitoIdentityCredentialsProvider {
     async fn provide_credentials(&self) -> Result<Credentials> {
         if let Some(ref logger) = self.logger {
-            logger.debug(&format!("@aws-sdk/credential-provider-cognito-identity - fromCognitoIdentity"));
+            logger.debug(&format!(
+                "@aws-sdk/credential-provider-cognito-identity - fromCognitoIdentity"
+            ));
         } else {
             debug!("@aws-sdk/credential-provider-cognito-identity - fromCognitoIdentity");
         }
@@ -574,9 +654,13 @@ pub struct CognitoIdentityPoolCredentialsProvider {
 
 impl CognitoIdentityPoolCredentialsProvider {
     pub fn new(params: CognitoIdentityPoolParams) -> Self {
-        let client: Arc<dyn CognitoIdentityClient> = params.client
+        let client: Arc<dyn CognitoIdentityClient> = params
+            .client
             .map(|c| Arc::from(c) as Arc<dyn CognitoIdentityClient>)
-            .unwrap_or_else(|| Arc::new(HttpCognitoIdentityClient::new("us-east-1".to_string())) as Arc<dyn CognitoIdentityClient>);
+            .unwrap_or_else(|| {
+                Arc::new(HttpCognitoIdentityClient::new("us-east-1".to_string()))
+                    as Arc<dyn CognitoIdentityClient>
+            });
 
         let cache = params.cache.map(|c| Arc::from(c) as Arc<dyn CognitoCache>);
 
@@ -597,14 +681,19 @@ impl CognitoIdentityPoolCredentialsProvider {
 impl CredentialProvider for CognitoIdentityPoolCredentialsProvider {
     async fn provide_credentials(&self) -> Result<Credentials> {
         if let Some(ref logger) = self.logger {
-            logger.debug(&format!("@aws-sdk/credential-provider-cognito-identity - fromCognitoIdentityPool"));
+            logger.debug(&format!(
+                "@aws-sdk/credential-provider-cognito-identity - fromCognitoIdentityPool"
+            ));
         } else {
             debug!("@aws-sdk/credential-provider-cognito-identity - fromCognitoIdentityPool");
         }
 
         // Generate cache key - matches JavaScript format exactly
         let cache_key = if let Some(ref user_identifier) = self.user_identifier {
-            format!("aws:cognito-identity-credentials:{}:{}", self.identity_pool_id, user_identifier)
+            format!(
+                "aws:cognito-identity-credentials:{}:{}",
+                self.identity_pool_id, user_identifier
+            )
         } else {
             // Without user identifier, caching is not used in JavaScript
             String::new()
@@ -638,7 +727,9 @@ impl CredentialProvider for CognitoIdentityPoolCredentialsProvider {
                     let identity_id_clone = identity_id.clone();
                     let cache_clone = Arc::clone(cache);
                     tokio::spawn(async move {
-                        let _ = cache_clone.set_item(&cache_key_clone, identity_id_clone).await;
+                        let _ = cache_clone
+                            .set_item(&cache_key_clone, identity_id_clone)
+                            .await;
                     });
                     identity_id
                 }
@@ -707,7 +798,10 @@ impl CredentialProvider for CognitoIdentityPoolCredentialsProvider {
             custom_role_arn: self.custom_role_arn.clone(),
         };
 
-        let response = self.client.get_credentials_for_identity(&creds_params).await?;
+        let response = self
+            .client
+            .get_credentials_for_identity(&creds_params)
+            .await?;
 
         Ok(Credentials {
             access_key_id: response.credentials.access_key_id,
@@ -723,7 +817,9 @@ impl CredentialProvider for CognitoIdentityPoolCredentialsProvider {
 }
 
 /// Resolve login providers (convert functions to strings)
-async fn resolve_logins(logins: &HashMap<String, LoginProvider>) -> Result<HashMap<String, String>> {
+async fn resolve_logins(
+    logins: &HashMap<String, LoginProvider>,
+) -> Result<HashMap<String, String>> {
     let mut resolved = HashMap::new();
 
     for (key, provider) in logins {
@@ -753,7 +849,10 @@ mod tests {
 
     #[async_trait]
     impl CognitoIdentityClient for MockCognitoIdentityClient {
-        async fn get_credentials_for_identity(&self, _params: &GetCredentialsForIdentityParams) -> Result<CognitoCredentialsResponse> {
+        async fn get_credentials_for_identity(
+            &self,
+            _params: &GetCredentialsForIdentityParams,
+        ) -> Result<CognitoCredentialsResponse> {
             if self.should_fail {
                 return Err(CredentialsProviderError::new("Mock Cognito client failure").into());
             }
@@ -778,7 +877,10 @@ mod tests {
             })
         }
 
-        async fn get_open_id_token(&self, _params: &GetOpenIdTokenParams) -> Result<GetOpenIdTokenResponse> {
+        async fn get_open_id_token(
+            &self,
+            _params: &GetOpenIdTokenParams,
+        ) -> Result<GetOpenIdTokenResponse> {
             if self.should_fail {
                 return Err(CredentialsProviderError::new("Mock GetOpenIdToken failure").into());
             }
@@ -834,8 +936,14 @@ mod tests {
         let credentials = result.unwrap();
         assert_eq!(credentials.access_key_id, "AKIATEST");
         assert_eq!(credentials.secret_access_key, "test-secret");
-        assert_eq!(credentials.session_token, Some("test-session-token".to_string()));
-        assert_eq!(credentials.credential_provider, Some("CREDENTIALS_COGNITO".to_string()));
+        assert_eq!(
+            credentials.session_token,
+            Some("test-session-token".to_string())
+        );
+        assert_eq!(
+            credentials.credential_provider,
+            Some("CREDENTIALS_COGNITO".to_string())
+        );
     }
 
     #[tokio::test]
@@ -866,7 +974,9 @@ mod tests {
     async fn test_cognito_identity_pool_with_cache() {
         let params = CognitoIdentityPoolParams {
             account_id: Some("123456789012".to_string()),
-            cache: Some(Box::new(MockCognitoCache { should_return_cached: true })),
+            cache: Some(Box::new(MockCognitoCache {
+                should_return_cached: true,
+            })),
             client: Some(Box::new(MockCognitoIdentityClient { should_fail: false })),
             custom_role_arn: None,
             identity_pool_id: "us-east-1:12345678-1234-1234-1234-123456789012".to_string(),
@@ -890,7 +1000,10 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_logins() {
         let mut logins = HashMap::new();
-        logins.insert("provider1".to_string(), LoginProvider::Token("token1".to_string()));
+        logins.insert(
+            "provider1".to_string(),
+            LoginProvider::Token("token1".to_string()),
+        );
 
         let result = resolve_logins(&logins).await;
         assert!(result.is_ok());

@@ -1,14 +1,17 @@
-pub mod interactive_mode;
-pub mod print_mode;
-pub mod components;
-pub mod state;
-pub mod events;
 pub mod app;
+pub mod components;
+pub mod events;
+pub mod interactive_mode;
 pub mod markdown;
+pub mod print_mode;
+pub mod state;
 
 use crate::error::Result;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
+        MouseEvent,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -38,7 +41,6 @@ pub fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stderr>>) -
     Ok(())
 }
 
-
 /// Event types for TUI
 #[derive(Debug)]
 pub enum TuiEvent {
@@ -48,7 +50,7 @@ pub enum TuiEvent {
     Resize(u16, u16),
     Tick,
     Message(String),
-    CommandOutput(String),  // For tool output that should be collapsible
+    CommandOutput(String), // For tool output that should be collapsible
     Error(String),
     Exit,
     Redraw,
@@ -68,7 +70,17 @@ pub enum TuiEvent {
     UpdateTaskStatus(Option<String>),
     TodosUpdated(Vec<crate::ai::todo_tool::Todo>),
     SetIterationLimit(bool, Option<Vec<crate::ai::Message>>),
-    SetStreamCanceller(Option<std::sync::Arc<tokio::sync::Mutex<Option<tokio::sync::mpsc::UnboundedSender<()>>>>>),
+    SetStreamCanceller(
+        Option<std::sync::Arc<tokio::sync::Mutex<Option<tokio::sync::mpsc::UnboundedSender<()>>>>>,
+    ),
+    AskUserQuestionRequired {
+        tool_use_id: String,
+        questions: Vec<crate::ai::ask_user_question_tool::Question>,
+        responder: tokio::sync::oneshot::Sender<std::collections::HashMap<String, String>>,
+    },
+    PlanModeChanged {
+        enabled: bool,
+    },
 }
 
 /// Permission decision from user
@@ -78,11 +90,14 @@ pub enum PermissionDecision {
     Deny,
     AlwaysAllow,
     Never,
-    Wait,  // User wants to provide feedback before continuing
+    Wait, // User wants to provide feedback before continuing
 }
 
 /// Create event handler channel
-pub fn create_event_handler() -> (mpsc::UnboundedSender<TuiEvent>, mpsc::UnboundedReceiver<TuiEvent>) {
+pub fn create_event_handler() -> (
+    mpsc::UnboundedSender<TuiEvent>,
+    mpsc::UnboundedReceiver<TuiEvent>,
+) {
     mpsc::unbounded_channel()
 }
 
@@ -90,18 +105,19 @@ pub fn create_event_handler() -> (mpsc::UnboundedSender<TuiEvent>, mpsc::Unbound
 pub async fn run_event_loop(tx: mpsc::UnboundedSender<TuiEvent>) {
     let tick_rate = std::time::Duration::from_millis(250);
     let mut last_tick = std::time::Instant::now();
-    
+
     loop {
         let timeout = tick_rate
             .checked_sub(last_tick.elapsed())
             .unwrap_or_else(|| std::time::Duration::from_secs(0));
-            
+
         if event::poll(timeout).unwrap_or(false) {
             match event::read() {
                 Ok(Event::Key(key)) => {
                     // Check for quit combinations
-                    if (key.code == KeyCode::Char('q') || key.code == KeyCode::Char('d')) 
-                        && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    if (key.code == KeyCode::Char('q') || key.code == KeyCode::Char('d'))
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
                         let _ = tx.send(TuiEvent::Exit);
                         break;
                     }
@@ -119,7 +135,7 @@ pub async fn run_event_loop(tx: mpsc::UnboundedSender<TuiEvent>) {
                 _ => {}
             }
         }
-        
+
         if last_tick.elapsed() >= tick_rate {
             let _ = tx.send(TuiEvent::Tick);
             last_tick = std::time::Instant::now();

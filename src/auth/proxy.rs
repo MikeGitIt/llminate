@@ -14,8 +14,8 @@ pub struct ProxyConfig {
     pub url: Option<String>,
     pub username: Option<String>,
     pub password: Option<String>,
-    pub auth_token: Option<String>,  // For Bearer authentication
-    pub no_proxy: Vec<String>,       // Bypass list
+    pub auth_token: Option<String>, // For Bearer authentication
+    pub no_proxy: Vec<String>,      // Bypass list
 }
 
 impl Default for ProxyConfig {
@@ -49,13 +49,18 @@ impl ProxyConfig {
                 // Extract username and password from URL
                 let username = parsed.username();
                 if !username.is_empty() {
-                    config.username = Some(urlencoding::decode(username)
-                        .unwrap_or_else(|_| username.into())
-                        .into_owned());
+                    config.username = Some(
+                        urlencoding::decode(username)
+                            .unwrap_or_else(|_| username.into())
+                            .into_owned(),
+                    );
                 }
 
-                config.password = parsed.password()
-                    .map(|s| urlencoding::decode(s).unwrap_or_else(|_| s.into()).into_owned());
+                config.password = parsed.password().map(|s| {
+                    urlencoding::decode(s)
+                        .unwrap_or_else(|_| s.into())
+                        .into_owned()
+                });
             }
         }
 
@@ -109,7 +114,7 @@ impl ProxyConfig {
             headers.insert(
                 PROXY_AUTHORIZATION,
                 HeaderValue::from_str(&format!("Bearer {}", token))
-                    .context("Invalid Bearer token")?
+                    .context("Invalid Bearer token")?,
             );
             return Ok(());
         }
@@ -122,7 +127,7 @@ impl ProxyConfig {
             headers.insert(
                 PROXY_AUTHORIZATION,
                 HeaderValue::from_str(&format!("Basic {}", encoded))
-                    .context("Invalid Basic auth credentials")?
+                    .context("Invalid Basic auth credentials")?,
             );
             return Ok(());
         }
@@ -143,12 +148,13 @@ impl ProxyConfig {
                         .into_owned();
 
                     let credentials = format!("{}:{}", decoded_username, decoded_password);
-                    let encoded = base64::engine::general_purpose::STANDARD.encode(credentials.as_bytes());
+                    let encoded =
+                        base64::engine::general_purpose::STANDARD.encode(credentials.as_bytes());
 
                     headers.insert(
                         PROXY_AUTHORIZATION,
                         HeaderValue::from_str(&format!("Basic {}", encoded))
-                            .context("Invalid proxy credentials")?
+                            .context("Invalid proxy credentials")?,
                     );
                 }
             }
@@ -160,8 +166,7 @@ impl ProxyConfig {
     // Create a reqwest::Proxy from this configuration
     pub fn to_reqwest_proxy(&self) -> Result<Option<reqwest::Proxy>> {
         if let Some(ref proxy_url) = self.url {
-            let mut proxy = reqwest::Proxy::all(proxy_url)
-                .context("Invalid proxy URL")?;
+            let mut proxy = reqwest::Proxy::all(proxy_url).context("Invalid proxy URL")?;
 
             // Add authentication if available
             if let (Some(ref username), Some(ref password)) = (&self.username, &self.password) {
@@ -185,34 +190,31 @@ impl ProxyConfig {
 
 // Helper function to add proxy authentication to existing headers
 // Matches JavaScript pattern from line 339079-339086
-pub fn add_proxy_authentication(
-    headers: &mut HeaderMap,
-    auth: Option<ProxyAuth>,
-) -> Result<()> {
+pub fn add_proxy_authentication(headers: &mut HeaderMap, auth: Option<ProxyAuth>) -> Result<()> {
     if let Some(auth) = auth {
         match auth {
             ProxyAuth::Basic { username, password } => {
                 let credentials = format!("{}:{}", username, password);
-                let encoded = base64::engine::general_purpose::STANDARD.encode(credentials.as_bytes());
+                let encoded =
+                    base64::engine::general_purpose::STANDARD.encode(credentials.as_bytes());
 
                 headers.insert(
                     PROXY_AUTHORIZATION,
                     HeaderValue::from_str(&format!("Basic {}", encoded))
-                        .context("Invalid Basic auth")?
+                        .context("Invalid Basic auth")?,
                 );
             }
             ProxyAuth::Bearer { token } => {
                 headers.insert(
                     PROXY_AUTHORIZATION,
                     HeaderValue::from_str(&format!("Bearer {}", token))
-                        .context("Invalid Bearer token")?
+                        .context("Invalid Bearer token")?,
                 );
             }
             ProxyAuth::Raw { value } => {
                 headers.insert(
                     PROXY_AUTHORIZATION,
-                    HeaderValue::from_str(&value)
-                        .context("Invalid proxy auth header")?
+                    HeaderValue::from_str(&value).context("Invalid proxy auth header")?,
                 );
             }
         }
@@ -225,7 +227,7 @@ pub fn add_proxy_authentication(
 pub enum ProxyAuth {
     Basic { username: String, password: String },
     Bearer { token: String },
-    Raw { value: String },  // Pre-encoded or custom format
+    Raw { value: String }, // Pre-encoded or custom format
 }
 
 // Parse proxy URL and extract authentication
@@ -246,11 +248,13 @@ pub fn parse_proxy_url(proxy_url: &str) -> Result<(String, Option<ProxyAuth>)> {
             username: urlencoding::decode(username)
                 .unwrap_or_else(|_| username.into())
                 .into_owned(),
-            password: password.map(|p|
-                urlencoding::decode(p)
-                    .unwrap_or_else(|_| p.into())
-                    .into_owned()
-            ).unwrap_or_default(),
+            password: password
+                .map(|p| {
+                    urlencoding::decode(p)
+                        .unwrap_or_else(|_| p.into())
+                        .into_owned()
+                })
+                .unwrap_or_default(),
         })
     } else {
         None
@@ -267,7 +271,7 @@ pub fn add_grpc_proxy_auth(headers: &mut HeaderMap, credentials: &str) -> Result
     headers.insert(
         PROXY_AUTHORIZATION,
         HeaderValue::from_str(&format!("Basic {}", encoded))
-            .context("Invalid GRPC proxy credentials")?
+            .context("Invalid GRPC proxy credentials")?,
     );
 
     Ok(())
@@ -289,7 +293,7 @@ mod tests {
         config.add_proxy_auth(&mut headers).unwrap();
 
         let auth_header = headers.get(PROXY_AUTHORIZATION).unwrap();
-        assert_eq!(auth_header, "Basic dXNlcjpwYXNz");  // base64("user:pass")
+        assert_eq!(auth_header, "Basic dXNlcjpwYXNz"); // base64("user:pass")
     }
 
     #[test]

@@ -1,12 +1,12 @@
 use anyhow::Result;
+use llminate::{
+    ai::notebook_tools::{NotebookEditTool, NotebookReadTool},
+    ai::tools::ToolHandler,
+};
 use serde_json::json;
-use tempfile::TempDir;
 use std::fs;
 use std::path::Path;
-use llminate::{
-    ai::tools::ToolHandler,
-    ai::notebook_tools::{NotebookReadTool, NotebookEditTool},
-};
+use tempfile::TempDir;
 
 /// Create a test notebook with some cells
 fn create_test_notebook(path: &Path) -> Result<()> {
@@ -61,7 +61,7 @@ fn create_test_notebook(path: &Path) -> Result<()> {
         "nbformat": 4,
         "nbformat_minor": 5
     });
-    
+
     let content = serde_json::to_string_pretty(&notebook)?;
     fs::write(path, content)?;
     Ok(())
@@ -72,14 +72,14 @@ async fn test_notebook_read_all_cells() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let notebook_path = temp_dir.path().join("test.ipynb");
     create_test_notebook(&notebook_path)?;
-    
+
     let tool = NotebookReadTool;
     let input = json!({
         "notebook_path": notebook_path.to_str().ok_or_else(|| anyhow::anyhow!("Invalid path"))?
     });
-    
+
     let result = tool.execute(input, None).await?;
-    
+
     // Verify the output contains expected content in XML-like format (matches JavaScript)
     assert!(result.contains("<cell id="));
     assert!(result.contains("</cell"));
@@ -88,13 +88,13 @@ async fn test_notebook_read_all_cells() -> Result<()> {
     assert!(result.contains("import numpy as np"));
     assert!(result.contains("Hello, World!"));
     assert!(result.contains("def factorial"));
-    
+
     // Verify cell types are shown in XML format
     assert!(result.contains("<cell_type>markdown</cell_type>"));
-    
+
     // Verify outputs are shown
     assert!(result.contains("120"));
-    
+
     Ok(())
 }
 
@@ -103,32 +103,35 @@ async fn test_notebook_read_specific_cell_by_index() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let notebook_path = temp_dir.path().join("test.ipynb");
     create_test_notebook(&notebook_path)?;
-    
+
     let tool = NotebookReadTool;
     let input = json!({
         "notebook_path": notebook_path.to_str().ok_or_else(|| anyhow::anyhow!("Invalid path"))?,
         "cell_id": "1"
     });
-    
+
     // JavaScript would fail here - it doesn't support numeric indices in execution
     let result = tool.execute(input, None).await;
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("Cell with ID \"1\" not found in notebook"));
-    
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Cell with ID \"1\" not found in notebook"));
+
     // Test with actual cell ID instead to verify the assertions below work
     let input = json!({
         "notebook_path": notebook_path.to_str().ok_or_else(|| anyhow::anyhow!("Invalid path"))?,
         "cell_id": "code-1"
     });
     let result = tool.execute(input, None).await?;
-    
+
     // Should only contain the second cell (code-1) in XML format
     assert!(result.contains("<cell id=\"code-1\">"));
     assert!(result.contains("import numpy as np"));
     assert!(result.contains("Hello, World!"));
     assert!(!result.contains("# Test Notebook"));
     assert!(!result.contains("def factorial"));
-    
+
     Ok(())
 }
 
@@ -137,22 +140,22 @@ async fn test_notebook_read_specific_cell_by_id() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let notebook_path = temp_dir.path().join("test.ipynb");
     create_test_notebook(&notebook_path)?;
-    
+
     let tool = NotebookReadTool;
     let input = json!({
         "notebook_path": notebook_path.to_str().ok_or_else(|| anyhow::anyhow!("Invalid path"))?,
         "cell_id": "code-2"
     });
-    
+
     let result = tool.execute(input, None).await?;
-    
+
     // Should only contain the factorial cell in XML format
     assert!(result.contains("<cell id=\"code-2\">"));
     assert!(result.contains("def factorial"));
     assert!(result.contains("120"));
     assert!(!result.contains("Hello, World!"));
     assert!(!result.contains("# Test Notebook"));
-    
+
     Ok(())
 }
 
@@ -162,11 +165,14 @@ async fn test_notebook_read_nonexistent_file() -> Result<()> {
     let input = json!({
         "notebook_path": "/nonexistent/path/notebook.ipynb"
     });
-    
+
     let result = tool.execute(input, None).await;
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("Invalid notebook path"));
-    
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Invalid notebook path"));
+
     Ok(())
 }
 
@@ -175,16 +181,19 @@ async fn test_notebook_read_invalid_extension() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let file_path = temp_dir.path().join("test.txt");
     fs::write(&file_path, "Not a notebook")?;
-    
+
     let tool = NotebookReadTool;
     let input = json!({
         "notebook_path": file_path.to_str().ok_or_else(|| anyhow::anyhow!("Invalid path"))?
     });
-    
+
     let result = tool.execute(input, None).await;
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("must be a Jupyter notebook"));
-    
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("must be a Jupyter notebook"));
+
     Ok(())
 }
 
@@ -193,37 +202,42 @@ async fn test_notebook_edit_replace_cell() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let notebook_path = temp_dir.path().join("test.ipynb");
     create_test_notebook(&notebook_path)?;
-    
+
     let tool = NotebookEditTool;
-    
+
     // Replace the first code cell
     let input = json!({
         "notebook_path": notebook_path.to_str().ok_or_else(|| anyhow::anyhow!("Invalid path"))?,
         "cell_id": "1",
         "new_source": "# Modified code\nprint('Modified!')"
     });
-    
+
     let result = tool.execute(input, None).await?;
     assert!(result.contains("Updated cell"));
-    
+
     // Read back and verify
     let content = fs::read_to_string(&notebook_path)?;
     let notebook: serde_json::Value = serde_json::from_str(&content)?;
-    
+
     let cell = &notebook["cells"][1];
     let source = if cell["source"].is_string() {
-        cell["source"].as_str().ok_or_else(|| anyhow::anyhow!("Expected string"))?.to_string()
+        cell["source"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Expected string"))?
+            .to_string()
     } else {
-        cell["source"].as_array().ok_or_else(|| anyhow::anyhow!("Expected array"))?
+        cell["source"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("Expected array"))?
             .iter()
             .filter_map(|v| v.as_str())
             .collect::<Vec<_>>()
             .join("")
     };
-    
+
     assert!(source.contains("Modified code"));
     assert!(source.contains("Modified!"));
-    
+
     Ok(())
 }
 
@@ -232,9 +246,9 @@ async fn test_notebook_edit_insert_cell() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let notebook_path = temp_dir.path().join("test.ipynb");
     create_test_notebook(&notebook_path)?;
-    
+
     let tool = NotebookEditTool;
-    
+
     // Insert a new cell after the first one
     let input = json!({
         "notebook_path": notebook_path.to_str().ok_or_else(|| anyhow::anyhow!("Invalid path"))?,
@@ -243,31 +257,42 @@ async fn test_notebook_edit_insert_cell() -> Result<()> {
         "cell_type": "markdown",
         "edit_mode": "insert"
     });
-    
+
     let result = tool.execute(input, None).await?;
     assert!(result.contains("Inserted cell"));
-    
+
     // Read back and verify
     let content = fs::read_to_string(&notebook_path)?;
     let notebook: serde_json::Value = serde_json::from_str(&content)?;
-    
+
     // Should now have 4 cells
-    assert_eq!(notebook["cells"].as_array().ok_or_else(|| anyhow::anyhow!("Expected array"))?.len(), 4);
-    
+    assert_eq!(
+        notebook["cells"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("Expected array"))?
+            .len(),
+        4
+    );
+
     // The second cell should be the inserted one
     let cell = &notebook["cells"][1];
     assert_eq!(cell["cell_type"], "markdown");
     let source = if cell["source"].is_string() {
-        cell["source"].as_str().ok_or_else(|| anyhow::anyhow!("Expected string"))?.to_string()
+        cell["source"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Expected string"))?
+            .to_string()
     } else {
-        cell["source"].as_array().ok_or_else(|| anyhow::anyhow!("Expected array"))?
+        cell["source"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("Expected array"))?
             .iter()
             .filter_map(|v| v.as_str())
             .collect::<Vec<_>>()
             .join("")
     };
     assert!(source.contains("Inserted markdown"));
-    
+
     Ok(())
 }
 
@@ -276,9 +301,9 @@ async fn test_notebook_edit_delete_cell() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let notebook_path = temp_dir.path().join("test.ipynb");
     create_test_notebook(&notebook_path)?;
-    
+
     let tool = NotebookEditTool;
-    
+
     // Delete the second cell
     let input = json!({
         "notebook_path": notebook_path.to_str().ok_or_else(|| anyhow::anyhow!("Invalid path"))?,
@@ -286,30 +311,41 @@ async fn test_notebook_edit_delete_cell() -> Result<()> {
         "new_source": "",  // Required but not used for delete
         "edit_mode": "delete"
     });
-    
+
     let result = tool.execute(input, None).await?;
     assert!(result.contains("Deleted cell"));
-    
+
     // Read back and verify
     let content = fs::read_to_string(&notebook_path)?;
     let notebook: serde_json::Value = serde_json::from_str(&content)?;
-    
+
     // Should now have 2 cells
-    assert_eq!(notebook["cells"].as_array().ok_or_else(|| anyhow::anyhow!("Expected array"))?.len(), 2);
-    
+    assert_eq!(
+        notebook["cells"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("Expected array"))?
+            .len(),
+        2
+    );
+
     // The second cell should now be the factorial one
     let cell = &notebook["cells"][1];
     let source = if cell["source"].is_string() {
-        cell["source"].as_str().ok_or_else(|| anyhow::anyhow!("Expected string"))?.to_string()
+        cell["source"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Expected string"))?
+            .to_string()
     } else {
-        cell["source"].as_array().ok_or_else(|| anyhow::anyhow!("Expected array"))?
+        cell["source"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("Expected array"))?
             .iter()
             .filter_map(|v| v.as_str())
             .collect::<Vec<_>>()
             .join("")
     };
     assert!(source.contains("factorial"));
-    
+
     Ok(())
 }
 
@@ -318,9 +354,9 @@ async fn test_notebook_edit_change_cell_type() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let notebook_path = temp_dir.path().join("test.ipynb");
     create_test_notebook(&notebook_path)?;
-    
+
     let tool = NotebookEditTool;
-    
+
     // Change a code cell to markdown
     let input = json!({
         "notebook_path": notebook_path.to_str().ok_or_else(|| anyhow::anyhow!("Invalid path"))?,
@@ -328,24 +364,26 @@ async fn test_notebook_edit_change_cell_type() -> Result<()> {
         "new_source": "# This was code\nNow it's markdown!",
         "cell_type": "markdown"
     });
-    
+
     let result = tool.execute(input, None).await?;
     assert!(result.contains("Updated cell"));
-    
+
     // Read back and verify
     let content = fs::read_to_string(&notebook_path)?;
     let notebook: serde_json::Value = serde_json::from_str(&content)?;
-    
+
     // Find the cell with id "code-1"
-    let cell = notebook["cells"].as_array().ok_or_else(|| anyhow::anyhow!("Expected array"))?
+    let cell = notebook["cells"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("Expected array"))?
         .iter()
         .find(|c| c["id"] == "code-1")
         .ok_or_else(|| anyhow::anyhow!("Cell not found"))?;
-    
+
     assert_eq!(cell["cell_type"], "markdown");
-    assert!(cell["outputs"].is_null());  // Outputs should be cleared
-    assert!(cell["execution_count"].is_null());  // Execution count should be cleared
-    
+    assert!(cell["outputs"].is_null()); // Outputs should be cleared
+    assert!(cell["execution_count"].is_null()); // Execution count should be cleared
+
     Ok(())
 }
 
@@ -354,19 +392,22 @@ async fn test_notebook_edit_invalid_cell_id() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let notebook_path = temp_dir.path().join("test.ipynb");
     create_test_notebook(&notebook_path)?;
-    
+
     let tool = NotebookEditTool;
-    
+
     let input = json!({
         "notebook_path": notebook_path.to_str().ok_or_else(|| anyhow::anyhow!("Invalid path"))?,
         "cell_id": "nonexistent-id",
         "new_source": "This won't work"
     });
-    
+
     let result = tool.execute(input, None).await;
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("not found in notebook"));
-    
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("not found in notebook"));
+
     Ok(())
 }
 
@@ -374,7 +415,7 @@ async fn test_notebook_edit_invalid_cell_id() -> Result<()> {
 async fn test_notebook_edit_empty_notebook() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let notebook_path = temp_dir.path().join("empty.ipynb");
-    
+
     // Create an empty notebook
     let notebook = json!({
         "cells": [],
@@ -383,9 +424,9 @@ async fn test_notebook_edit_empty_notebook() -> Result<()> {
         "nbformat_minor": 5
     });
     fs::write(&notebook_path, serde_json::to_string(&notebook)?)?;
-    
+
     let tool = NotebookEditTool;
-    
+
     // Insert a cell at the beginning
     let input = json!({
         "notebook_path": notebook_path.to_str().ok_or_else(|| anyhow::anyhow!("Invalid path"))?,
@@ -393,14 +434,20 @@ async fn test_notebook_edit_empty_notebook() -> Result<()> {
         "cell_type": "markdown",
         "edit_mode": "insert"
     });
-    
+
     let result = tool.execute(input, None).await?;
     assert!(result.contains("Inserted cell"));
-    
+
     // Verify the notebook now has one cell
     let content = fs::read_to_string(&notebook_path)?;
     let updated: serde_json::Value = serde_json::from_str(&content)?;
-    assert_eq!(updated["cells"].as_array().ok_or_else(|| anyhow::anyhow!("Expected array"))?.len(), 1);
-    
+    assert_eq!(
+        updated["cells"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("Expected array"))?
+            .len(),
+        1
+    );
+
     Ok(())
 }

@@ -17,13 +17,13 @@
 //! - SubagentStop: When a sub-agent stops
 //! - PermissionRequest: When permission is requested
 
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tokio::process::Command;
+use tokio::sync::RwLock;
 use tokio::time::{timeout, Duration};
-use once_cell::sync::Lazy;
 
 /// Global hook registry
 pub static HOOK_REGISTRY: Lazy<Arc<RwLock<HookRegistry>>> =
@@ -189,7 +189,10 @@ impl HookRegistry {
 
     /// Get all hooks for a specific type
     pub fn get_hooks(&self, hook_type: HookType) -> &[HookEntry] {
-        self.hooks.get(&hook_type).map(|v| v.as_slice()).unwrap_or(&[])
+        self.hooks
+            .get(&hook_type)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 
     /// Clear all hooks
@@ -221,7 +224,9 @@ impl HookRegistry {
                 // Parse entries array
                 if let Some(entries_arr) = entries.as_array() {
                     for entry_value in entries_arr {
-                        if let Ok(mut entry) = serde_json::from_value::<HookEntry>(entry_value.clone()) {
+                        if let Ok(mut entry) =
+                            serde_json::from_value::<HookEntry>(entry_value.clone())
+                        {
                             entry.plugin_name = Some(plugin_name.to_string());
                             self.register(hook_type, entry);
                         }
@@ -238,10 +243,7 @@ impl HookRegistry {
 }
 
 /// Execute a hook command
-pub async fn execute_hook_command(
-    command: &HookCommand,
-    context: &HookContext,
-) -> HookResult {
+pub async fn execute_hook_command(command: &HookCommand, context: &HookContext) -> HookResult {
     let timeout_duration = Duration::from_millis(command.timeout);
 
     // Build environment variables for the hook
@@ -258,7 +260,10 @@ pub async fn execute_hook_command(
         env_vars.insert("CLAUDE_TOOL_OUTPUT".to_string(), tool_output.clone());
     }
     env_vars.insert("CLAUDE_SESSION_ID".to_string(), context.session_id.clone());
-    env_vars.insert("CLAUDE_HOOK_TYPE".to_string(), format!("{:?}", context.hook_type));
+    env_vars.insert(
+        "CLAUDE_HOOK_TYPE".to_string(),
+        format!("{:?}", context.hook_type),
+    );
 
     // Execute command
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
@@ -269,8 +274,9 @@ pub async fn execute_hook_command(
             .arg("-c")
             .arg(&command.command)
             .envs(env_vars)
-            .output()
-    ).await;
+            .output(),
+    )
+    .await;
 
     match result {
         Ok(Ok(output)) => {
@@ -292,29 +298,29 @@ pub async fn execute_hook_command(
                 } else if line.starts_with("CLAUDE_SUPPRESS_OUTPUT=") {
                     hook_result.suppress_output = line.ends_with("true");
                 } else if line.starts_with("CLAUDE_SYSTEM_MESSAGE=") {
-                    hook_result.system_message = Some(line.trim_start_matches("CLAUDE_SYSTEM_MESSAGE=").to_string());
+                    hook_result.system_message = Some(
+                        line.trim_start_matches("CLAUDE_SYSTEM_MESSAGE=")
+                            .to_string(),
+                    );
                 } else if line.starts_with("CLAUDE_STOP_REASON=") {
-                    hook_result.stop_reason = Some(line.trim_start_matches("CLAUDE_STOP_REASON=").to_string());
+                    hook_result.stop_reason =
+                        Some(line.trim_start_matches("CLAUDE_STOP_REASON=").to_string());
                 }
             }
 
             hook_result
         }
-        Ok(Err(e)) => {
-            HookResult {
-                stderr: format!("Failed to execute hook: {}", e),
-                exit_code: Some(-1),
-                ..Default::default()
-            }
-        }
-        Err(_) => {
-            HookResult {
-                stderr: format!("Hook timed out after {} ms", command.timeout),
-                exit_code: Some(-1),
-                stop_execution: false,
-                ..Default::default()
-            }
-        }
+        Ok(Err(e)) => HookResult {
+            stderr: format!("Failed to execute hook: {}", e),
+            exit_code: Some(-1),
+            ..Default::default()
+        },
+        Err(_) => HookResult {
+            stderr: format!("Hook timed out after {} ms", command.timeout),
+            exit_code: Some(-1),
+            stop_execution: false,
+            ..Default::default()
+        },
     }
 }
 
@@ -352,10 +358,7 @@ impl HookContext {
 }
 
 /// Execute all hooks for a given type and context
-pub async fn execute_hooks(
-    hook_type: HookType,
-    context: &HookContext,
-) -> Vec<HookResult> {
+pub async fn execute_hooks(hook_type: HookType, context: &HookContext) -> Vec<HookResult> {
     let registry = HOOK_REGISTRY.read().await;
 
     if registry.disabled {

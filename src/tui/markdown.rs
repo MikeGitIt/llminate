@@ -1,12 +1,12 @@
-use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd, CodeBlockKind};
+use once_cell::sync::Lazy;
+use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
 };
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Theme, ThemeSet};
-use syntect::parsing::{SyntaxSet, SyntaxReference};
-use once_cell::sync::Lazy;
+use syntect::parsing::{SyntaxReference, SyntaxSet};
 
 // Cache expensive syntax highlighting resources
 static SYNTAX_SET: Lazy<SyntaxSet> = Lazy::new(|| SyntaxSet::load_defaults_newlines());
@@ -17,15 +17,15 @@ pub fn parse_markdown(content: &str) -> Text<'static> {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_TABLES);
-    
+
     let parser = Parser::new_ext(content, options);
     let mut lines: Vec<Line> = Vec::new();
     let mut current_line: Vec<Span> = Vec::new();
-    
+
     // Use cached syntax highlighting resources
     let syntax_set = &*SYNTAX_SET;
     let theme = &THEME_SET.themes["base16-ocean.dark"];
-    
+
     // State tracking
     let mut in_code_block = false;
     let mut code_lang = String::new();
@@ -35,7 +35,7 @@ pub fn parse_markdown(content: &str) -> Text<'static> {
     let mut in_code = false;
     let mut list_depth: usize = 0;
     let mut in_list_item = false;
-    
+
     for event in parser {
         match event {
             Event::Start(tag) => match tag {
@@ -48,7 +48,7 @@ pub fn parse_markdown(content: &str) -> Text<'static> {
                         _ => String::new(),
                     };
                     code_content.clear();
-                    
+
                     // Start new line for code block
                     if !current_line.is_empty() {
                         lines.push(Line::from(current_line.clone()));
@@ -81,20 +81,20 @@ pub fn parse_markdown(content: &str) -> Text<'static> {
                         lines.push(Line::from(current_line.clone()));
                         current_line.clear();
                     }
-                    
+
                     let style = match level {
-                        pulldown_cmark::HeadingLevel::H1 => {
-                            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
-                        }
-                        pulldown_cmark::HeadingLevel::H2 => {
-                            Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD)
-                        }
-                        pulldown_cmark::HeadingLevel::H3 => {
-                            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
-                        }
+                        pulldown_cmark::HeadingLevel::H1 => Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                        pulldown_cmark::HeadingLevel::H2 => Style::default()
+                            .fg(Color::Blue)
+                            .add_modifier(Modifier::BOLD),
+                        pulldown_cmark::HeadingLevel::H3 => Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
                         _ => Style::default().fg(Color::Yellow),
                     };
-                    
+
                     current_line.push(Span::styled("", style));
                 }
                 _ => {}
@@ -104,7 +104,7 @@ pub fn parse_markdown(content: &str) -> Text<'static> {
                 TagEnd::Strong => in_bold = false,
                 TagEnd::CodeBlock => {
                     in_code_block = false;
-                    
+
                     // Render code block with syntax highlighting
                     if !code_content.is_empty() {
                         lines.push(Line::from(vec![Span::styled(
@@ -115,7 +115,9 @@ pub fn parse_markdown(content: &str) -> Text<'static> {
                         if !code_lang.is_empty() {
                             lines.push(Line::from(vec![Span::styled(
                                 format!(" {} ", code_lang),
-                                Style::default().fg(Color::Cyan).add_modifier(Modifier::ITALIC),
+                                Style::default()
+                                    .fg(Color::Cyan)
+                                    .add_modifier(Modifier::ITALIC),
                             )]));
                         }
 
@@ -137,7 +139,7 @@ pub fn parse_markdown(content: &str) -> Text<'static> {
                             Style::default().fg(Color::Gray),
                         )]));
                     }
-                    
+
                     code_content.clear();
                     code_lang.clear();
                 }
@@ -201,7 +203,9 @@ pub fn parse_markdown(content: &str) -> Text<'static> {
             Event::Code(code) => {
                 current_line.push(Span::styled(
                     format!("`{}`", code),
-                    Style::default().fg(Color::Yellow).bg(Color::Rgb(40, 40, 40)),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .bg(Color::Rgb(40, 40, 40)),
                 ));
             }
             Event::SoftBreak | Event::HardBreak => {
@@ -213,53 +217,63 @@ pub fn parse_markdown(content: &str) -> Text<'static> {
             _ => {}
         }
     }
-    
+
     // Push any remaining content
     if !current_line.is_empty() {
         lines.push(Line::from(current_line));
     }
-    
+
     // Remove trailing empty lines
     while lines.last().map(|l| l.spans.is_empty()).unwrap_or(false) {
         lines.pop();
     }
-    
+
     Text::from(lines)
 }
 
 /// Apply syntax highlighting to code
-fn highlight_code(code: &str, syntax: &SyntaxReference, theme: &Theme, lines: &mut Vec<Line<'static>>) {
+fn highlight_code(
+    code: &str,
+    syntax: &SyntaxReference,
+    theme: &Theme,
+    lines: &mut Vec<Line<'static>>,
+) {
     let mut highlighter = HighlightLines::new(syntax, theme);
-    
+
     for line in code.lines() {
         let highlighted = highlighter.highlight_line(line, &*SYNTAX_SET);
-        
+
         if let Ok(ranges) = highlighted {
             let mut spans = Vec::new();
-            
+
             for (style, text) in ranges {
-                let fg = Color::Rgb(
-                    style.foreground.r,
-                    style.foreground.g,
-                    style.foreground.b,
-                );
-                
+                let fg = Color::Rgb(style.foreground.r, style.foreground.g, style.foreground.b);
+
                 let mut ratatui_style = Style::default().fg(fg);
-                
+
                 // Convert syntect font style to ratatui modifiers
-                if style.font_style.contains(syntect::highlighting::FontStyle::BOLD) {
+                if style
+                    .font_style
+                    .contains(syntect::highlighting::FontStyle::BOLD)
+                {
                     ratatui_style = ratatui_style.add_modifier(Modifier::BOLD);
                 }
-                if style.font_style.contains(syntect::highlighting::FontStyle::ITALIC) {
+                if style
+                    .font_style
+                    .contains(syntect::highlighting::FontStyle::ITALIC)
+                {
                     ratatui_style = ratatui_style.add_modifier(Modifier::ITALIC);
                 }
-                if style.font_style.contains(syntect::highlighting::FontStyle::UNDERLINE) {
+                if style
+                    .font_style
+                    .contains(syntect::highlighting::FontStyle::UNDERLINE)
+                {
                     ratatui_style = ratatui_style.add_modifier(Modifier::UNDERLINED);
                 }
-                
+
                 spans.push(Span::styled(text.to_string(), ratatui_style));
             }
-            
+
             lines.push(Line::from(spans));
         } else {
             // Fallback if highlighting fails

@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use sentry::{protocol as sentry_protocol, Hub as SentryHub, Scope as SentryScope};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use uuid::Uuid;
@@ -181,9 +181,9 @@ impl Session {
                     .or_else(|| u.username.clone())
             })
         });
-        self.ip_address = data.ip_address.or_else(|| {
-            data.user.as_ref().and_then(|u| u.ip_address.clone())
-        });
+        self.ip_address = data
+            .ip_address
+            .or_else(|| data.user.as_ref().and_then(|u| u.ip_address.clone()));
     }
 
     /// Update session matching JavaScript updateSession
@@ -196,14 +196,14 @@ impl Session {
                 }
             }
             if self.did.is_none() && updates.did.is_none() {
-                self.did = user.id
-                    .or(user.email)
-                    .or(user.username);
+                self.did = user.id.or(user.email).or(user.username);
             }
         }
 
         // Update timestamp
-        self.timestamp = updates.timestamp.unwrap_or_else(|| Utc::now().timestamp() as f64);
+        self.timestamp = updates
+            .timestamp
+            .unwrap_or_else(|| Utc::now().timestamp() as f64);
 
         // Update various session properties
         if let Some(mechanism) = updates.abnormal_mechanism {
@@ -332,7 +332,9 @@ impl SessionManager {
     /// Set current session
     pub fn set_session(&self, session: Option<Session>) -> Result<()> {
         {
-            let mut current = self.session.write()
+            let mut current = self
+                .session
+                .write()
                 .map_err(|e| anyhow::anyhow!("Failed to acquire session lock: {}", e))?;
             *current = session;
         }
@@ -343,7 +345,9 @@ impl SessionManager {
 
     /// Get current session
     pub fn get_session(&self) -> Result<Option<Session>> {
-        let session = self.session.read()
+        let session = self
+            .session
+            .read()
             .map_err(|e| anyhow::anyhow!("Failed to acquire session lock: {}", e))?;
         Ok(session.clone())
     }
@@ -362,7 +366,9 @@ impl SessionManager {
     where
         F: Fn() + Send + Sync + 'static,
     {
-        let mut listeners = self.listeners.write()
+        let mut listeners = self
+            .listeners
+            .write()
             .map_err(|e| anyhow::anyhow!("Failed to acquire listeners lock: {}", e))?;
         listeners.push(Box::new(listener));
         Ok(())
@@ -481,8 +487,7 @@ pub fn send_session(session: &Session) -> Result<()> {
 
     // In production, this would send to Sentry backend
     // For now, we'll just serialize it
-    let _json = serde_json::to_string(&envelope)
-        .context("Failed to serialize session envelope")?;
+    let _json = serde_json::to_string(&envelope).context("Failed to serialize session envelope")?;
 
     // The actual sending would be handled by the Sentry transport layer
     // sentry::capture_event() or similar
@@ -547,7 +552,9 @@ impl SessionAggregatesManager {
             session.environment.as_deref().unwrap_or("production")
         );
 
-        let mut aggregates = self.aggregates.write()
+        let mut aggregates = self
+            .aggregates
+            .write()
             .map_err(|e| anyhow::anyhow!("Failed to acquire aggregates lock: {}", e))?;
 
         let aggregate = aggregates.entry(key).or_insert_with(|| SessionAggregate {
@@ -568,7 +575,9 @@ impl SessionAggregatesManager {
     }
 
     pub fn flush(&self) -> Result<HashMap<String, SessionAggregate>> {
-        let mut aggregates = self.aggregates.write()
+        let mut aggregates = self
+            .aggregates
+            .write()
             .map_err(|e| anyhow::anyhow!("Failed to acquire aggregates lock: {}", e))?;
 
         let current = aggregates.clone();
@@ -747,7 +756,10 @@ mod tests {
         // Should fail without release
         let result = capture_session_client(&session);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("missing or non-string release"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("missing or non-string release"));
 
         // Should succeed with release
         let mut session_with_release = session;

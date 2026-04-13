@@ -55,13 +55,13 @@ impl ModelRegistry {
             aliases: HashMap::new(),
             presets: HashMap::new(),
         };
-        
+
         registry.register_default_models();
         registry.register_default_presets();
-        
+
         registry
     }
-    
+
     /// Register default models
     fn register_default_models(&mut self) {
         // Claude 4 Opus (Latest)
@@ -76,9 +76,13 @@ impl ModelRegistry {
             supports_tools: true,
             supports_vision: true,
             supports_streaming: true,
-            aliases: vec!["opus".to_string(), "claude-4-opus".to_string(), "opus-4-1".to_string()],
+            aliases: vec![
+                "opus".to_string(),
+                "claude-4-opus".to_string(),
+                "opus-4-1".to_string(),
+            ],
         });
-        
+
         // Claude 4 Opus (Previous)
         self.register_model(ModelInfo {
             id: "claude-opus-4-20250514".to_string(),
@@ -93,7 +97,7 @@ impl ModelRegistry {
             supports_streaming: true,
             aliases: vec!["opus-4".to_string(), "claude-opus-4".to_string()],
         });
-        
+
         // Claude 3 Haiku
         self.register_model(ModelInfo {
             id: "claude-3-haiku-20240307".to_string(),
@@ -108,7 +112,7 @@ impl ModelRegistry {
             supports_streaming: true,
             aliases: vec!["haiku".to_string(), "claude-3-haiku".to_string()],
         });
-        
+
         // Claude 3.5 Sonnet
         self.register_model(ModelInfo {
             id: "claude-3-5-sonnet-20241022".to_string(),
@@ -128,7 +132,7 @@ impl ModelRegistry {
             ],
         });
     }
-    
+
     /// Register default presets
     fn register_default_presets(&mut self) {
         // Coding preset
@@ -140,7 +144,7 @@ impl ModelRegistry {
             top_k: None,
             max_tokens: Some(4096),
         });
-        
+
         // Creative writing preset
         self.register_preset(ModelPreset {
             name: "creative".to_string(),
@@ -150,7 +154,7 @@ impl ModelRegistry {
             top_k: Some(50),
             max_tokens: None,
         });
-        
+
         // Analysis preset
         self.register_preset(ModelPreset {
             name: "analysis".to_string(),
@@ -160,7 +164,7 @@ impl ModelRegistry {
             top_k: None,
             max_tokens: None,
         });
-        
+
         // Conversation preset
         self.register_preset(ModelPreset {
             name: "conversation".to_string(),
@@ -170,7 +174,7 @@ impl ModelRegistry {
             top_k: None,
             max_tokens: None,
         });
-        
+
         // Precise preset
         self.register_preset(ModelPreset {
             name: "precise".to_string(),
@@ -181,52 +185,52 @@ impl ModelRegistry {
             max_tokens: None,
         });
     }
-    
+
     /// Register a model
     pub fn register_model(&mut self, model: ModelInfo) {
         // Register aliases
         for alias in &model.aliases {
             self.aliases.insert(alias.clone(), model.id.clone());
         }
-        
+
         self.models.insert(model.id.clone(), model);
     }
-    
+
     /// Register a preset
     pub fn register_preset(&mut self, preset: ModelPreset) {
         self.presets.insert(preset.name.clone(), preset);
     }
-    
+
     /// Get a model by ID or alias
     pub fn get_model(&self, id_or_alias: &str) -> Option<&ModelInfo> {
         // Try direct lookup
         if let Some(model) = self.models.get(id_or_alias) {
             return Some(model);
         }
-        
+
         // Try alias lookup
         if let Some(model_id) = self.aliases.get(id_or_alias) {
             return self.models.get(model_id);
         }
-        
+
         None
     }
-    
+
     /// Get a preset by name
     pub fn get_preset(&self, name: &str) -> Option<&ModelPreset> {
         self.presets.get(name)
     }
-    
+
     /// List all models
     pub fn list_models(&self) -> Vec<&ModelInfo> {
         self.models.values().collect()
     }
-    
+
     /// List all presets
     pub fn list_presets(&self) -> Vec<&ModelPreset> {
         self.presets.values().collect()
     }
-    
+
     /// Resolve model ID from alias
     pub fn resolve_model_id(&self, id_or_alias: &str) -> Option<String> {
         if self.models.contains_key(id_or_alias) {
@@ -253,34 +257,34 @@ impl ModelSelector {
     pub fn new(registry: ModelRegistry) -> Self {
         Self { registry }
     }
-    
+
     /// Select model based on requirements
     pub fn select_model(&self, requirements: &ModelRequirements) -> Option<&ModelInfo> {
         let mut candidates: Vec<_> = self.registry.list_models();
-        
+
         // Filter by context window
         if let Some(min_context) = requirements.min_context_window {
             candidates.retain(|m| m.context_window >= min_context);
         }
-        
+
         // Filter by max output tokens
         if let Some(min_output) = requirements.min_output_tokens {
             candidates.retain(|m| m.max_output_tokens >= min_output);
         }
-        
+
         // Filter by capabilities
         if requirements.requires_tools {
             candidates.retain(|m| m.supports_tools);
         }
-        
+
         if requirements.requires_vision {
             candidates.retain(|m| m.supports_vision);
         }
-        
+
         if requirements.requires_streaming {
             candidates.retain(|m| m.supports_streaming);
         }
-        
+
         // Sort by cost if budget conscious
         if requirements.optimize_for_cost {
             candidates.sort_by(|a, b| {
@@ -292,7 +296,7 @@ impl ModelSelector {
             // Sort by capability (context window as proxy)
             candidates.sort_by(|a, b| b.context_window.cmp(&a.context_window));
         }
-        
+
         candidates.first().copied()
     }
 }
@@ -344,7 +348,7 @@ impl ModelUsageTracker {
             usage: HashMap::new(),
         }
     }
-    
+
     /// Track a request
     pub fn track_request(
         &mut self,
@@ -356,31 +360,31 @@ impl ModelUsageTracker {
         error: bool,
     ) {
         let usage = self.usage.entry(model_id.to_string()).or_default();
-        
+
         usage.total_requests += 1;
         usage.total_input_tokens += input_tokens as u64;
         usage.total_output_tokens += output_tokens as u64;
         usage.total_duration_ms += duration_ms;
-        
+
         // Calculate cost
         let input_cost = (input_tokens as f64 / 1000.0) * model_info.input_cost_per_1k;
         let output_cost = (output_tokens as f64 / 1000.0) * model_info.output_cost_per_1k;
         usage.total_cost += input_cost + output_cost;
-        
+
         if error {
             usage.error_count += 1;
         }
     }
-    
+
     /// Get usage for a model
     pub fn get_usage(&self, model_id: &str) -> Option<&ModelUsage> {
         self.usage.get(model_id)
     }
-    
+
     /// Get total usage across all models
     pub fn get_total_usage(&self) -> ModelUsage {
         let mut total = ModelUsage::default();
-        
+
         for usage in self.usage.values() {
             total.total_requests += usage.total_requests;
             total.total_input_tokens += usage.total_input_tokens;
@@ -389,10 +393,10 @@ impl ModelUsageTracker {
             total.total_duration_ms += usage.total_duration_ms;
             total.error_count += usage.error_count;
         }
-        
+
         total
     }
-    
+
     /// Clear usage statistics
     pub fn clear(&mut self) {
         self.usage.clear();

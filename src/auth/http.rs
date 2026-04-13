@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 
 /// HTTP API Key authentication location constants
 pub struct HttpApiKeyAuthLocation;
@@ -39,7 +39,8 @@ impl HttpRequest {
         let parsed = url::Url::parse(url).context("Failed to parse URL")?;
 
         let protocol = parsed.scheme().to_string();
-        let hostname = parsed.host_str()
+        let hostname = parsed
+            .host_str()
             .ok_or_else(|| anyhow::anyhow!("URL missing hostname"))?
             .to_string();
         let port = parsed.port();
@@ -48,9 +49,12 @@ impl HttpRequest {
         // Parse query parameters
         let mut query = HashMap::new();
         for (key, value) in parsed.query_pairs() {
-            query.entry(key.to_string())
+            query
+                .entry(key.to_string())
                 .and_modify(|e| match e {
-                    QueryValue::Single(v) => *e = QueryValue::Multiple(vec![v.clone(), value.to_string()]),
+                    QueryValue::Single(v) => {
+                        *e = QueryValue::Multiple(vec![v.clone(), value.to_string()])
+                    }
                     QueryValue::Multiple(v) => v.push(value.to_string()),
                 })
                 .or_insert(QueryValue::Single(value.to_string()));
@@ -95,12 +99,12 @@ impl HttpRequest {
             return false;
         }
 
-        obj.get("method").is_some() &&
-        obj.get("protocol").is_some() &&
-        obj.get("hostname").is_some() &&
-        obj.get("path").is_some() &&
-        obj.get("query").is_some() &&
-        obj.get("headers").is_some()
+        obj.get("method").is_some()
+            && obj.get("protocol").is_some()
+            && obj.get("hostname").is_some()
+            && obj.get("path").is_some()
+            && obj.get("query").is_some()
+            && obj.get("headers").is_some()
     }
 
     /// Build URL from request components
@@ -109,7 +113,9 @@ impl HttpRequest {
 
         if let Some(port) = self.port {
             // Don't add default ports
-            if !(self.protocol == "https" && port == 443) && !(self.protocol == "http" && port == 80) {
+            if !(self.protocol == "https" && port == 443)
+                && !(self.protocol == "http" && port == 80)
+            {
                 url.push_str(&format!(":{}", port));
             }
         }
@@ -122,14 +128,16 @@ impl HttpRequest {
             for (key, value) in &self.query {
                 match value {
                     QueryValue::Single(v) => {
-                        params.push(format!("{}={}",
+                        params.push(format!(
+                            "{}={}",
                             urlencoding::encode(key),
                             urlencoding::encode(v)
                         ));
                     }
                     QueryValue::Multiple(values) => {
                         for v in values {
-                            params.push(format!("{}={}",
+                            params.push(format!(
+                                "{}={}",
                                 urlencoding::encode(key),
                                 urlencoding::encode(v)
                             ));
@@ -208,7 +216,7 @@ pub trait HttpSigner: Send + Sync {
         &self,
         request: &HttpRequest,
         identity: &Value,
-        signing_properties: Option<&Value>
+        signing_properties: Option<&Value>,
     ) -> Result<HttpRequest>;
 }
 
@@ -221,7 +229,7 @@ impl HttpSigner for HttpApiKeyAuthSigner {
         &self,
         request: &HttpRequest,
         identity: &Value,
-        signing_properties: Option<&Value>
+        signing_properties: Option<&Value>,
     ) -> Result<HttpRequest> {
         let props = signing_properties
             .ok_or_else(|| anyhow::anyhow!(
@@ -240,20 +248,22 @@ impl HttpSigner for HttpApiKeyAuthSigner {
                 "request could not be signed with `apiKey` since the `in` signer property is missing"
             ))?;
 
-        let api_key = identity.get("apiKey")
+        let api_key = identity
+            .get("apiKey")
             .and_then(|k| k.as_str())
-            .ok_or_else(|| anyhow::anyhow!(
-                "request could not be signed with `apiKey` since the `apiKey` is not defined"
-            ))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "request could not be signed with `apiKey` since the `apiKey` is not defined"
+                )
+            })?;
 
         let mut cloned_request = HttpRequest::clone(request);
 
         if location == HttpApiKeyAuthLocation::QUERY {
             // Add API key to query parameters
-            cloned_request.query.insert(
-                name.to_string(),
-                QueryValue::Single(api_key.to_string())
-            );
+            cloned_request
+                .query
+                .insert(name.to_string(), QueryValue::Single(api_key.to_string()));
         } else if location == HttpApiKeyAuthLocation::HEADER {
             // Add API key to headers
             let value = if let Some(scheme) = props.get("scheme").and_then(|s| s.as_str()) {
@@ -282,20 +292,22 @@ impl HttpSigner for HttpBearerAuthSigner {
         &self,
         request: &HttpRequest,
         identity: &Value,
-        _signing_properties: Option<&Value>
+        _signing_properties: Option<&Value>,
     ) -> Result<HttpRequest> {
         let mut cloned_request = HttpRequest::clone(request);
 
-        let token = identity.get("token")
+        let token = identity
+            .get("token")
             .and_then(|t| t.as_str())
-            .ok_or_else(|| anyhow::anyhow!(
-                "request could not be signed with `token` since the `token` is not defined"
-            ))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "request could not be signed with `token` since the `token` is not defined"
+                )
+            })?;
 
-        cloned_request.headers.insert(
-            "Authorization".to_string(),
-            format!("Bearer {}", token)
-        );
+        cloned_request
+            .headers
+            .insert("Authorization".to_string(), format!("Bearer {}", token));
 
         Ok(cloned_request)
     }
@@ -310,7 +322,7 @@ impl HttpSigner for NoAuthSigner {
         &self,
         request: &HttpRequest,
         _identity: &Value,
-        _signing_properties: Option<&Value>
+        _signing_properties: Option<&Value>,
     ) -> Result<HttpRequest> {
         // Pass-through, return request unmodified
         Ok(request.clone())
@@ -326,8 +338,9 @@ mod tests {
     fn test_http_request_creation() {
         let request = HttpRequest::new(
             "GET".to_string(),
-            "https://api.example.com:8080/path?key=value&arr=1&arr=2"
-        ).unwrap();
+            "https://api.example.com:8080/path?key=value&arr=1&arr=2",
+        )
+        .unwrap();
 
         assert_eq!(request.method, "GET");
         assert_eq!(request.protocol, "https");
@@ -342,8 +355,11 @@ mod tests {
 
     #[test]
     fn test_http_request_clone() {
-        let mut request = HttpRequest::new("POST".to_string(), "https://api.example.com/test").unwrap();
-        request.headers.insert("X-Custom".to_string(), "value".to_string());
+        let mut request =
+            HttpRequest::new("POST".to_string(), "https://api.example.com/test").unwrap();
+        request
+            .headers
+            .insert("X-Custom".to_string(), "value".to_string());
         request.body = Some(b"test body".to_vec());
 
         let cloned = HttpRequest::clone(&request);
@@ -360,8 +376,14 @@ mod tests {
     #[test]
     fn test_query_cloning() {
         let mut query = HashMap::new();
-        query.insert("single".to_string(), QueryValue::Single("value".to_string()));
-        query.insert("multi".to_string(), QueryValue::Multiple(vec!["a".to_string(), "b".to_string()]));
+        query.insert(
+            "single".to_string(),
+            QueryValue::Single("value".to_string()),
+        );
+        query.insert(
+            "multi".to_string(),
+            QueryValue::Multiple(vec!["a".to_string(), "b".to_string()]),
+        );
 
         let cloned = clone_query(&query);
 
@@ -415,7 +437,10 @@ mod tests {
 
         let signed = signer.sign(&request, &identity, None).await.unwrap();
 
-        assert_eq!(signed.headers.get("Authorization"), Some(&"Bearer test-token-123".to_string()));
+        assert_eq!(
+            signed.headers.get("Authorization"),
+            Some(&"Bearer test-token-123".to_string())
+        );
     }
 
     #[tokio::test]
@@ -444,9 +469,15 @@ mod tests {
             "in": "header"
         });
 
-        let signed = signer.sign(&request, &identity, Some(&props)).await.unwrap();
+        let signed = signer
+            .sign(&request, &identity, Some(&props))
+            .await
+            .unwrap();
 
-        assert_eq!(signed.headers.get("X-API-Key"), Some(&"my-api-key".to_string()));
+        assert_eq!(
+            signed.headers.get("X-API-Key"),
+            Some(&"my-api-key".to_string())
+        );
     }
 
     #[tokio::test]
@@ -464,9 +495,15 @@ mod tests {
             "scheme": "ApiKey"
         });
 
-        let signed = signer.sign(&request, &identity, Some(&props)).await.unwrap();
+        let signed = signer
+            .sign(&request, &identity, Some(&props))
+            .await
+            .unwrap();
 
-        assert_eq!(signed.headers.get("Authorization"), Some(&"ApiKey my-api-key".to_string()));
+        assert_eq!(
+            signed.headers.get("Authorization"),
+            Some(&"ApiKey my-api-key".to_string())
+        );
     }
 
     #[tokio::test]
@@ -483,9 +520,14 @@ mod tests {
             "in": "query"
         });
 
-        let signed = signer.sign(&request, &identity, Some(&props)).await.unwrap();
+        let signed = signer
+            .sign(&request, &identity, Some(&props))
+            .await
+            .unwrap();
 
-        assert!(matches!(signed.query.get("api_key"), Some(QueryValue::Single(v)) if v == "my-api-key"));
+        assert!(
+            matches!(signed.query.get("api_key"), Some(QueryValue::Single(v)) if v == "my-api-key")
+        );
     }
 
     #[tokio::test]
@@ -518,14 +560,23 @@ mod tests {
 
         let result = signer.sign(&request, &identity, None).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("signer properties are missing"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("signer properties are missing"));
     }
 
     #[test]
     fn test_build_url() {
-        let mut request = HttpRequest::new("GET".to_string(), "https://api.example.com/test").unwrap();
-        request.query.insert("key".to_string(), QueryValue::Single("value".to_string()));
-        request.query.insert("multi".to_string(), QueryValue::Multiple(vec!["a".to_string(), "b".to_string()]));
+        let mut request =
+            HttpRequest::new("GET".to_string(), "https://api.example.com/test").unwrap();
+        request
+            .query
+            .insert("key".to_string(), QueryValue::Single("value".to_string()));
+        request.query.insert(
+            "multi".to_string(),
+            QueryValue::Multiple(vec!["a".to_string(), "b".to_string()]),
+        );
 
         let url = request.build_url();
         assert!(url.starts_with("https://api.example.com/test?"));

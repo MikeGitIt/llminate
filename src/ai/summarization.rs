@@ -3,7 +3,7 @@
 
 /// Returns the basic system prompt for conversation summarization.
 /// This is used as the system message when creating summaries.
-/// 
+///
 /// Extracted from line 393980 in test-fixed.js
 pub fn get_summarization_system_prompt() -> &'static str {
     "You are a helpful AI assistant tasked with summarizing conversations."
@@ -12,7 +12,7 @@ pub fn get_summarization_system_prompt() -> &'static str {
 /// Returns the detailed summary instructions prompt.
 /// This comprehensive prompt provides detailed instructions for creating thorough conversation summaries
 /// including the required 9 sections and formatting specifications.
-/// 
+///
 /// Extracted from lines 393160-393259 in test-fixed.js
 pub fn get_detailed_summary_prompt() -> String {
     r#"Your task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests and your previous actions.
@@ -118,13 +118,16 @@ Additional Instructions:
 
 /// Returns a complete detailed summary prompt with custom additional instructions.
 /// This allows the caller to append specific instructions to the base prompt.
-/// 
+///
 /// # Arguments
 /// * `additional_instructions` - Custom instructions to append to the base prompt
 pub fn get_detailed_summary_prompt_with_instructions(additional_instructions: &str) -> String {
     let base_prompt = get_detailed_summary_prompt();
-    base_prompt.replace(r#"Additional Instructions:
-"#, &format!("Additional Instructions:\n{}", additional_instructions))
+    base_prompt.replace(
+        r#"Additional Instructions:
+"#,
+        &format!("Additional Instructions:\n{}", additional_instructions),
+    )
 }
 
 #[cfg(test)]
@@ -134,13 +137,16 @@ mod tests {
     #[test]
     fn test_summarization_system_prompt() {
         let prompt = get_summarization_system_prompt();
-        assert_eq!(prompt, "You are a helpful AI assistant tasked with summarizing conversations.");
+        assert_eq!(
+            prompt,
+            "You are a helpful AI assistant tasked with summarizing conversations."
+        );
     }
 
     #[test]
     fn test_detailed_summary_prompt_contains_required_sections() {
         let prompt = get_detailed_summary_prompt();
-        
+
         // Check for the 9 required sections
         assert!(prompt.contains("1. Primary Request and Intent:"));
         assert!(prompt.contains("2. Key Technical Concepts:"));
@@ -173,7 +179,8 @@ mod tests {
     fn test_prompt_with_custom_instructions() {
         let custom_instructions = "Focus on Rust code changes and error handling.";
         let prompt = get_detailed_summary_prompt_with_instructions(custom_instructions);
-        
-        assert!(prompt.contains("Additional Instructions:\nFocus on Rust code changes and error handling."));
+
+        assert!(prompt
+            .contains("Additional Instructions:\nFocus on Rust code changes and error handling."));
     }
 }

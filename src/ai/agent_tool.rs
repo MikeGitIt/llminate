@@ -1,15 +1,15 @@
-use crate::ai::tools::{ToolHandler, ToolExecutor};
-use crate::ai::{create_client, MessageRole, Message, MessageContent, ContentPart};
-use crate::error::{Error, Result};
-use tokio_util::sync::CancellationToken;
+use crate::ai::tools::{ToolExecutor, ToolHandler};
+use crate::ai::{create_client, ContentPart, Message, MessageContent, MessageRole};
 use crate::config::Config;
+use crate::error::{Error, Result};
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use tokio::task::JoinSet;
-use std::time::Instant;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::RwLock;
+use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 /// Available agent types matching JavaScript implementation
@@ -111,7 +111,7 @@ impl ToolHandler for AgentTool {
     fn description(&self) -> String {
         "Launch a new task".to_string()
     }
-    
+
     fn input_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -145,26 +145,28 @@ impl ToolHandler for AgentTool {
             "required": ["description", "prompt", "subagent_type"]
         })
     }
-    
+
     fn action_description(&self, input: &Value) -> String {
         let description = input["description"].as_str().unwrap_or("Unknown task");
         let subagent_type = input["subagent_type"].as_str().unwrap_or("general-purpose");
         format!("Launch {} agent: {}", subagent_type, description)
     }
-    
+
     fn permission_details(&self, input: &Value) -> String {
         let description = input["description"].as_str().unwrap_or("Unknown task");
         format!("Task: {}", description)
     }
-    
-    async fn execute(&self, input: Value, cancellation_token: Option<CancellationToken>) -> Result<String> {
+
+    async fn execute(
+        &self,
+        input: Value,
+        cancellation_token: Option<CancellationToken>,
+    ) -> Result<String> {
         let prompt = input["prompt"]
             .as_str()
             .ok_or_else(|| Error::InvalidInput("Missing 'prompt' field".to_string()))?;
 
-        let description = input["description"]
-            .as_str()
-            .unwrap_or("Task");
+        let description = input["description"].as_str().unwrap_or("Task");
 
         // Extract subagent_type (required)
         let subagent_type_str = input["subagent_type"]
@@ -173,9 +175,7 @@ impl ToolHandler for AgentTool {
         let agent_type = AgentType::from_str(subagent_type_str);
 
         // Extract optional model selection
-        let model = input["model"]
-            .as_str()
-            .and_then(AgentModel::from_str);
+        let model = input["model"].as_str().and_then(AgentModel::from_str);
 
         // Extract optional resume agent ID
         let resume_id = input["resume"].as_str().map(String::from);
@@ -194,16 +194,18 @@ impl ToolHandler for AgentTool {
             if let Some(prev_state) = states.get(prev_agent_id) {
                 // Resume from previous state
                 drop(states); // Release read lock
-                return self.execute_resume(
-                    &agent_id,
-                    prev_agent_id,
-                    prompt,
-                    description,
-                    &agent_type,
-                    model.as_ref(),
-                    start_time,
-                    cancellation_token,
-                ).await;
+                return self
+                    .execute_resume(
+                        &agent_id,
+                        prev_agent_id,
+                        prompt,
+                        description,
+                        &agent_type,
+                        model.as_ref(),
+                        start_time,
+                        cancellation_token,
+                    )
+                    .await;
             } else {
                 return Err(Error::NotFound(format!(
                     "Agent ID '{}' not found. Cannot resume.",
@@ -214,19 +216,21 @@ impl ToolHandler for AgentTool {
 
         // Handle background execution
         if run_in_background {
-            return self.execute_background(
-                agent_id,
-                prompt.to_string(),
-                description.to_string(),
-                agent_type,
-                model,
-                cancellation_token,
-            ).await;
+            return self
+                .execute_background(
+                    agent_id,
+                    prompt.to_string(),
+                    description.to_string(),
+                    agent_type,
+                    model,
+                    cancellation_token,
+                )
+                .await;
         }
 
         // Get parallelTasksCount from config, default to 1
-        let config = crate::config::load_config(crate::config::ConfigScope::User)
-            .unwrap_or_default();
+        let config =
+            crate::config::load_config(crate::config::ConfigScope::User).unwrap_or_default();
         let parallel_tasks_count = config.parallel_tasks_count.unwrap_or(1);
 
         if parallel_tasks_count > 1 {
@@ -239,7 +243,8 @@ impl ToolHandler for AgentTool {
                 parallel_tasks_count,
                 start_time,
                 cancellation_token,
-            ).await
+            )
+            .await
         } else {
             // Single agent execution
             self.execute_single(
@@ -250,7 +255,8 @@ impl ToolHandler for AgentTool {
                 0,
                 start_time,
                 cancellation_token,
-            ).await
+            )
+            .await
         }
     }
 }
@@ -267,13 +273,27 @@ impl AgentTool {
         start_time: Instant,
         cancellation_token: Option<CancellationToken>,
     ) -> Result<String> {
-        let result = self.run_agent(prompt, description, agent_type, agent_index, false, cancellation_token.clone()).await?;
+        let result = self
+            .run_agent(
+                prompt,
+                description,
+                agent_type,
+                agent_index,
+                false,
+                cancellation_token.clone(),
+            )
+            .await?;
 
         // Store agent state for potential resume
-        self.store_agent_state(agent_id, agent_type.clone(), result.messages.clone()).await;
+        self.store_agent_state(agent_id, agent_type.clone(), result.messages.clone())
+            .await;
 
         let mut output = String::new();
-        output.push_str(&format!("=== Task: {} [{}] ===\n\n", description, agent_type.as_str()));
+        output.push_str(&format!(
+            "=== Task: {} [{}] ===\n\n",
+            description,
+            agent_type.as_str()
+        ));
 
         // Extract text content from result
         for part in &result.content {
@@ -306,7 +326,12 @@ impl AgentTool {
         cancellation_token: Option<CancellationToken>,
     ) -> Result<String> {
         let mut output = String::new();
-        output.push_str(&format!("=== Task: {} [{}] (running {} parallel agents) ===\n\n", description, agent_type.as_str(), parallel_count));
+        output.push_str(&format!(
+            "=== Task: {} [{}] (running {} parallel agents) ===\n\n",
+            description,
+            agent_type.as_str(),
+            parallel_count
+        ));
 
         // Launch parallel agents
         let mut join_set = JoinSet::new();
@@ -320,7 +345,16 @@ impl AgentTool {
             let at_clone = agent_type_clone.clone();
 
             join_set.spawn(async move {
-                agent_tool.run_agent(&prompt_clone, &description_clone, &at_clone, i, false, cancellation_clone).await
+                agent_tool
+                    .run_agent(
+                        &prompt_clone,
+                        &description_clone,
+                        &at_clone,
+                        i,
+                        false,
+                        cancellation_clone,
+                    )
+                    .await
             });
         }
 
@@ -356,10 +390,16 @@ impl AgentTool {
                         error_chain.push_str(&format!("\n  caused by: {}", source));
                         current_error = source;
                     }
-                    output.push_str(&format!("\n--- Agent {} failed ---\n{}\n", agent_count, error_chain));
+                    output.push_str(&format!(
+                        "\n--- Agent {} failed ---\n{}\n",
+                        agent_count, error_chain
+                    ));
                 }
                 Err(e) => {
-                    output.push_str(&format!("\n--- Agent {} panicked: {} ---\n", agent_count, e));
+                    output.push_str(&format!(
+                        "\n--- Agent {} panicked: {} ---\n",
+                        agent_count, e
+                    ));
                 }
             }
         }
@@ -369,7 +409,16 @@ impl AgentTool {
             output.push_str("\n=== Synthesis Phase ===\n");
 
             let synthesis_prompt = self.create_synthesis_prompt(prompt, &agent_results);
-            let synthesis_result = self.run_agent(&synthesis_prompt, "Synthesis", agent_type, 0, true, cancellation_token.clone()).await?;
+            let synthesis_result = self
+                .run_agent(
+                    &synthesis_prompt,
+                    "Synthesis",
+                    agent_type,
+                    0,
+                    true,
+                    cancellation_token.clone(),
+                )
+                .await?;
 
             // Extract text content from synthesis
             for part in &synthesis_result.content {
@@ -413,23 +462,23 @@ impl AgentTool {
         tokio::spawn(async move {
             let agent_tool = AgentTool;
             let start_time = Instant::now();
-            let result = agent_tool.run_agent(
-                &prompt,
-                &description,
-                &agent_type_clone,
-                0,
-                false,
-                cancellation_token,
-            ).await;
+            let result = agent_tool
+                .run_agent(
+                    &prompt,
+                    &description,
+                    &agent_type_clone,
+                    0,
+                    false,
+                    cancellation_token,
+                )
+                .await;
 
             // Store the result for later retrieval via TaskOutput
             match result {
                 Ok(agent_result) => {
-                    agent_tool.store_agent_state(
-                        &agent_id_clone,
-                        agent_type_clone,
-                        agent_result.messages,
-                    ).await;
+                    agent_tool
+                        .store_agent_state(&agent_id_clone, agent_type_clone, agent_result.messages)
+                        .await;
                 }
                 Err(e) => {
                     eprintln!("Background agent {} failed: {}", agent_id_clone, e);
@@ -467,19 +516,27 @@ impl AgentTool {
         })?;
 
         // Continue from previous messages with new prompt
-        let result = self.run_agent_with_history(
-            prev_state.messages,
-            additional_prompt,
-            description,
-            agent_type,
-            cancellation_token,
-        ).await?;
+        let result = self
+            .run_agent_with_history(
+                prev_state.messages,
+                additional_prompt,
+                description,
+                agent_type,
+                cancellation_token,
+            )
+            .await?;
 
         // Store new agent state
-        self.store_agent_state(new_agent_id, agent_type.clone(), result.messages.clone()).await;
+        self.store_agent_state(new_agent_id, agent_type.clone(), result.messages.clone())
+            .await;
 
         let mut output = String::new();
-        output.push_str(&format!("=== Resumed Task: {} [{}] ===\n(Continued from agent {})\n\n", description, agent_type.as_str(), prev_agent_id));
+        output.push_str(&format!(
+            "=== Resumed Task: {} [{}] ===\n(Continued from agent {})\n\n",
+            description,
+            agent_type.as_str(),
+            prev_agent_id
+        ));
 
         // Extract text content from result
         for part in &result.content {
@@ -501,7 +558,12 @@ impl AgentTool {
     }
 
     /// Store agent state for potential resume
-    async fn store_agent_state(&self, agent_id: &str, agent_type: AgentType, messages: Vec<Message>) {
+    async fn store_agent_state(
+        &self,
+        agent_id: &str,
+        agent_type: AgentType,
+        messages: Vec<Message>,
+    ) {
         let state = StoredAgentState {
             agent_id: agent_id.to_string(),
             agent_type,
@@ -528,7 +590,7 @@ impl AgentTool {
             }
         }
     }
-    
+
     /// Run a single agent instance
     async fn run_agent(
         &self,
@@ -566,13 +628,11 @@ impl AgentTool {
             .collect();
 
         // Build the request for the sub-agent
-        let mut messages = vec![
-            Message {
-                role: MessageRole::User,
-                content: MessageContent::Text(prompt.to_string()),
-                name: None,
-            }
-        ];
+        let mut messages = vec![Message {
+            role: MessageRole::User,
+            content: MessageContent::Text(prompt.to_string()),
+            name: None,
+        }];
 
         // System prompt for sub-agent - matching JavaScript implementation (line 368376)
         let system_prompt = if is_synthesis {
@@ -608,7 +668,7 @@ impl AgentTool {
                 if token.is_cancelled() {
                     result_content.push(ContentPart::Text {
                         text: "[Agent execution cancelled by user]".to_string(),
-                        citations: None
+                        citations: None,
                     });
                     break;
                 }
@@ -618,7 +678,7 @@ impl AgentTool {
             if loop_count > MAX_LOOPS {
                 result_content.push(ContentPart::Text {
                     text: "[Agent reached maximum iterations]".to_string(),
-                    citations: None
+                    citations: None,
                 });
                 break;
             }
@@ -661,7 +721,10 @@ impl AgentTool {
                             cancellation_token: cancellation_token.clone(),
                             event_tx: None, // Subagents don't need UI events
                         });
-                        match tool_executor.execute_with_context(name, input.clone(), tool_context).await {
+                        match tool_executor
+                            .execute_with_context(name, input.clone(), tool_context)
+                            .await
+                        {
                             Ok(tool_result) => {
                                 if let ContentPart::ToolResult { content, .. } = &tool_result {
                                     tool_results.push(ContentPart::ToolResult {
@@ -779,7 +842,7 @@ impl AgentTool {
                 if token.is_cancelled() {
                     result_content.push(ContentPart::Text {
                         text: "[Agent execution cancelled by user]".to_string(),
-                        citations: None
+                        citations: None,
                     });
                     break;
                 }
@@ -789,7 +852,7 @@ impl AgentTool {
             if loop_count > MAX_LOOPS {
                 result_content.push(ContentPart::Text {
                     text: "[Agent reached maximum iterations]".to_string(),
-                    citations: None
+                    citations: None,
                 });
                 break;
             }
@@ -826,7 +889,10 @@ impl AgentTool {
                             cancellation_token: cancellation_token.clone(),
                             event_tx: None,
                         });
-                        match tool_executor.execute_with_context(name, input.clone(), tool_context).await {
+                        match tool_executor
+                            .execute_with_context(name, input.clone(), tool_context)
+                            .await
+                        {
                             Ok(tool_result) => {
                                 if let ContentPart::ToolResult { content, .. } = &tool_result {
                                     tool_results.push(ContentPart::ToolResult {
@@ -889,7 +955,11 @@ impl AgentTool {
     }
 
     /// Get system prompt based on agent type
-    fn get_system_prompt_for_agent_type(&self, agent_type: &AgentType, description: &str) -> String {
+    fn get_system_prompt_for_agent_type(
+        &self,
+        agent_type: &AgentType,
+        description: &str,
+    ) -> String {
         match agent_type {
             AgentType::Explore => {
                 "You are a fast exploration agent specialized for exploring codebases. \
@@ -934,18 +1004,18 @@ impl AgentTool {
             }
         }
     }
-    
+
     /// Create synthesis prompt from multiple agent results - matching JavaScript implementation
     fn create_synthesis_prompt(&self, original_prompt: &str, results: &[AgentResult]) -> String {
         let mut agent_responses = String::new();
-        
+
         // Sort by agent index and format responses
         let mut sorted_results = results.to_vec();
         sorted_results.sort_by_key(|r| r.agent_index);
-        
+
         for (i, result) in sorted_results.iter().enumerate() {
             agent_responses.push_str(&format!("== AGENT {} RESPONSE ==\n", i + 1));
-            
+
             // Extract text content
             for part in &result.content {
                 if let ContentPart::Text { text, .. } = part {
@@ -954,7 +1024,7 @@ impl AgentTool {
                 }
             }
         }
-        
+
         format!(
             "Original task: {}\n\
             I've assigned multiple agents to tackle this task. Each agent has analyzed the problem and provided their findings.\n\

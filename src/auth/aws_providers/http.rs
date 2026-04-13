@@ -1,4 +1,6 @@
-use super::{Credentials, CredentialProvider, CredentialsProviderError, parse_credential_expiration};
+use super::{
+    parse_credential_expiration, CredentialProvider, Credentials, CredentialsProviderError,
+};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use reqwest::{Client, Url};
@@ -67,10 +69,16 @@ impl FromHttp {
     /// Create HTTP credential provider from environment variables
     pub fn from_env() -> Self {
         Self {
-            aws_container_credentials_relative_uri: env::var(AWS_CONTAINER_CREDENTIALS_RELATIVE_URI).ok(),
+            aws_container_credentials_relative_uri: env::var(
+                AWS_CONTAINER_CREDENTIALS_RELATIVE_URI,
+            )
+            .ok(),
             aws_container_credentials_full_uri: env::var(AWS_CONTAINER_CREDENTIALS_FULL_URI).ok(),
             aws_container_authorization_token: env::var(AWS_CONTAINER_AUTHORIZATION_TOKEN).ok(),
-            aws_container_authorization_token_file: env::var(AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE).ok(),
+            aws_container_authorization_token_file: env::var(
+                AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE,
+            )
+            .ok(),
             timeout: Duration::from_millis(1000),
             logger: None,
         }
@@ -121,7 +129,9 @@ impl FromHttp {
         if let Some(ref relative_uri) = self.aws_container_credentials_relative_uri {
             let base_url = Url::parse(CONTAINER_METADATA_ENDPOINT)
                 .context("Invalid container metadata endpoint")?;
-            return Ok(base_url.join(relative_uri).context("Invalid relative URI")?);
+            return Ok(base_url
+                .join(relative_uri)
+                .context("Invalid relative URI")?);
         }
 
         Err(CredentialsProviderError::new(
@@ -139,9 +149,15 @@ impl FromHttp {
             match fs::read_to_string(token_file).await {
                 Ok(token) => Ok(Some(token.trim().to_string())),
                 Err(e) => {
-                    let error = CredentialsProviderError::new(
-                        format!("Unable to read authorization token from file {}: {}", token_file, e)
-                    ).with_logger(self.logger.clone().unwrap_or_else(|| "fromHttp".to_string()));
+                    let error = CredentialsProviderError::new(format!(
+                        "Unable to read authorization token from file {}: {}",
+                        token_file, e
+                    ))
+                    .with_logger(
+                        self.logger
+                            .clone()
+                            .unwrap_or_else(|| "fromHttp".to_string()),
+                    );
                     Err(error.into())
                 }
             }
@@ -151,7 +167,11 @@ impl FromHttp {
     }
 
     /// Make HTTP request for credentials (JavaScript httpRequest call at line 885)
-    async fn http_request(&self, url: Url, auth_header: Option<String>) -> Result<ContainerMetadataCredentials> {
+    async fn http_request(
+        &self,
+        url: Url,
+        auth_header: Option<String>,
+    ) -> Result<ContainerMetadataCredentials> {
         let client = Client::builder()
             .timeout(self.timeout)
             .build()
@@ -169,9 +189,11 @@ impl FromHttp {
             .context("Failed to send HTTP request for credentials")?;
 
         if !response.status().is_success() {
-            return Err(CredentialsProviderError::new(
-                format!("HTTP request failed with status: {}", response.status())
-            ).into());
+            return Err(CredentialsProviderError::new(format!(
+                "HTTP request failed with status: {}",
+                response.status()
+            ))
+            .into());
         }
 
         let credentials: ContainerMetadataCredentials = response
@@ -218,12 +240,19 @@ impl CredentialProvider for FromHttp {
         // Validate the response
         if !self.is_valid_credentials_response(&metadata_creds) {
             return Err(CredentialsProviderError::new(
-                "Invalid response from container metadata service."
-            ).with_logger(self.logger.clone().unwrap_or_else(|| "fromHttp".to_string())).into());
+                "Invalid response from container metadata service.",
+            )
+            .with_logger(
+                self.logger
+                    .clone()
+                    .unwrap_or_else(|| "fromHttp".to_string()),
+            )
+            .into());
         }
 
         // Parse expiration if present
-        let expiration = metadata_creds.expiration
+        let expiration = metadata_creds
+            .expiration
             .as_ref()
             .and_then(|exp| parse_credential_expiration(exp));
 
@@ -288,8 +317,8 @@ pub fn from_http_with_options(
 mod tests {
     use super::*;
     use std::env;
+    use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
-    use wiremock::matchers::{method, path, header};
 
     // Helper to set and clean up environment variables
     struct EnvVar {
@@ -342,7 +371,10 @@ mod tests {
 
         assert_eq!(credentials.access_key_id, "test_access_key");
         assert_eq!(credentials.secret_access_key, "test_secret_key");
-        assert_eq!(credentials.session_token, Some("test_session_token".to_string()));
+        assert_eq!(
+            credentials.session_token,
+            Some("test_session_token".to_string())
+        );
         assert!(credentials.expiration.is_some());
     }
 
@@ -380,7 +412,9 @@ mod tests {
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI or AWS_CONTAINER_CREDENTIALS_FULL_URI"));
+        assert!(error_msg.contains(
+            "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI or AWS_CONTAINER_CREDENTIALS_FULL_URI"
+        ));
     }
 
     #[tokio::test]
@@ -447,7 +481,7 @@ mod tests {
 
         let _full_uri = EnvVar::set(
             AWS_CONTAINER_CREDENTIALS_FULL_URI,
-            &format!("{}/v2/credentials/task-id", mock_server.uri())
+            &format!("{}/v2/credentials/task-id", mock_server.uri()),
         );
 
         let provider = from_http().with_timeout(Duration::from_secs(5));
@@ -475,7 +509,9 @@ mod tests {
 
         // Create a temporary file with auth token
         let temp_file = tempfile::NamedTempFile::new().unwrap();
-        fs::write(&temp_file.path(), "file-token-content").await.unwrap();
+        fs::write(&temp_file.path(), "file-token-content")
+            .await
+            .unwrap();
 
         let provider = FromHttp::new()
             .with_full_uri(format!("{}/credentials", mock_server.uri()))

@@ -1,0 +1,188 @@
+================================================================================
+INVESTIGATION COMPLETE: EnterPlanMode Empty Input Buffer Issue
+================================================================================
+
+EXECUTIVE SUMMARY
+================================================================================
+The EnterPlanMode tool cannot execute because the streaming pipeline has a 
+critical bug in handling tools with empty input schemas. The code ignores the 
+initial input value from the API and then tries to parse an empty string, 
+resulting in a JSON parsing error instead of tool execution.
+
+ROOT CAUSE
+================================================================================
+File: src/ai/streaming.rs
+Issue: Two streaming code paths with identical bugs
+
+When ContentBlockStart arrives with ToolUse { id, name, input }, the code:
+1. Uses pattern ".." to ignore the input field
+2. Clears tool_input_buffer to empty string ""
+3. Does NOT initialize buffer with the input value from API
+
+When ContentBlockStop arrives, the code:
+1. Tries to parse the buffer as JSON
+2. Buffer is empty ("") for tools with no input properties
+3. serde_json::from_str("") fails with "EOF while parsing"
+4. Sends Error event instead of ToolUseComplete
+5. Tool handler never executes
+
+HOW IT AFFECTS EnterPlanMode
+================================================================================
+1. EnterPlanMode schema has "properties": {} (no input properties)
+2. Anthropic API sends: content_block_start with input: {}
+3. API does NOT send input_json_delta (input already complete)
+4. Code clears buffer, ignoring initial input: {}
+5. At content_block_stop, buffer is empty ""
+6. Parsing "" fails
+7. User sees error: "Failed to parse tool input: EOF while parsing"
+8. Tool never executes, plan mode never activates
+
+THE BUG IN CODE
+================================================================================
+
+StreamingHandler::process_stream (lines 105-114):
+────────────────────────────────────────────────
+    ContentBlock::ToolUse { id, name, .. } => {  // ← IGNORES input field
+        current_tool_id = Some(id.clone());
+        tool_input_buffer.clear();  // ← CLEARS to empty string
+        let _ = tx.send(StreamingUpdate::ToolUseStart { id, name });
+    }
+
+StreamingHandler::process_stream (lines 148-166):
+──────────────────────────────────────────────────
+    if let Some(id) = current_tool_id.take() {
+        match serde_json::from_str(&tool_input_buffer) {  // ← Parses ""
+            Ok(input) => { /* ... */ }
+            Err(e) => {
+                // ← WRONG: sends Error instead of using fallback
+                let _ = tx.send(StreamingUpdate::Error(
+                    format!("Failed to parse tool input: {}", e)
+                ));
+            }
+        }
+    }
+
+StreamProcessor::process (lines 393-452):
+──────────────────────────────────────────
+    Same issues in two places:
+    - Line 396: Ignores input field with ".."
+    - Line 437: Tries to parse empty buffer
+
+WHY THIS BUG EXISTS
+================================================================================
+1. Pattern matching with ".." silently ignores the input field
+2. The initial input: {} is never used
+3. Buffer is cleared unconditionally
+4. No fallback for empty input case
+5. Only tools with input properties work (they get input_json_delta events)
+6. Tools with empty input schemas immediately fail
+
+VERIFICATION CHECKLIST
+================================================================================
+✓ src/ai/client.rs line 497: ContentBlock::ToolUse has input: Value field
+✓ src/ai/streaming.rs line 110: Uses ".." pattern, ignores input
+✓ src/ai/streaming.rs line 112: Unconditionally clears buffer
+✓ src/ai/streaming.rs line 150: Tries to parse tool_input_buffer
+✓ src/ai/streaming.rs line 396: Second path also ignores input
+✓ src/ai/streaming.rs line 437: Second path also parses empty buffer
+✓ src/ai/enter_plan_mode_tool.rs: Schema has empty properties {}
+✓ src/ai/tools.rs line 562: EnterPlanMode IS registered
+✓ src/tui/state.rs line 1008: Code EXISTS to handle EnterPlanMode
+✓ src/tui/state.rs line 1775: Error gets sent to TUI
+
+THE FIX
+================================================================================
+Two streaming code paths need identical changes:
+
+1. Capture the input field (don't ignore with ..)
+2. Initialize buffer with serialized input value
+3. Accumulate InputJsonDelta chunks on top of initial input
+4. Handle empty buffers at ContentBlockStop
+
+Example fix for StreamingHandler::process_stream:
+
+    ContentBlock::ToolUse { id, name, input } => {  // ← Capture
+        current_tool_id = Some(id.clone());
+        // Initialize with initial input
+        tool_input_buffer = serde_json::to_string(&input)
+            .unwrap_or_else(|_| "{}".to_string());
+        let _ = tx.send(StreamingUpdate::ToolUseStart { id, name });
+    }
+
+    // At ContentBlockStop:
+    if let Some(id) = current_tool_id.take() {
+        if tool_input_buffer.is_empty() {
+            tool_input_buffer = "{}".to_string();
+        }
+        match serde_json::from_str(&tool_input_buffer) {
+            Ok(input) => {
+                let _ = tx.send(StreamingUpdate::ToolUseComplete { id, input });
+            }
+            Err(e) => {
+                let _ = tx.send(StreamingUpdate::Error(
+                    format!("Failed to parse tool input: {}", e)
+                ));
+            }
+        }
+    }
+
+Apply same pattern to StreamProcessor::process (lines 393-452)
+
+IMPACT ANALYSIS
+================================================================================
+Broken:
+- EnterPlanMode (confirmed empty input schema)
+- Any other tool with empty input schema
+
+Working:
+- All tools with input properties (Bash, Read, Write, etc.)
+- These tools get input_json_delta events that fill the buffer
+
+Severity: HIGH
+- EnterPlanMode is a newly implemented tool (2025)
+- Appears to be completely non-functional
+- Users cannot enter plan mode at all
+- Error is cryptic and hard to debug
+
+DETECTION METHOD
+================================================================================
+To confirm this is the issue:
+1. Grep for "EOF while parsing" in recent error logs
+2. Check if it occurs exactly when EnterPlanMode is called
+3. Check if other empty-input tools fail the same way
+
+To test the fix:
+1. Try to enter plan mode in TUI
+2. Verify no "EOF while parsing" error
+3. Verify "PlanModeChanged { enabled: true }" event fires
+4. Verify UI displays plan mode indicator
+5. Run existing Bash tool tests to ensure no regression
+
+RELATED CODE
+================================================================================
+Files that depend on correct streaming:
+- src/tui/state.rs (tool execution handler)
+- src/tui/interactive_mode.rs (tool display)
+- src/tui/components.rs (tool rendering)
+
+All these assume ToolUseComplete is sent correctly.
+If streaming fails, none of these execute.
+
+FILES TO MODIFY
+================================================================================
+Primary: src/ai/streaming.rs
+- StreamingHandler::process_stream (2 locations)
+- StreamProcessor::process (2 locations)
+
+Test: 
+- Check existing tests don't break
+- Add test for empty input tools (if tests exist)
+
+CONCLUSION
+================================================================================
+The streaming pipeline has a straightforward but critical bug that breaks
+all tools with empty input schemas. The fix is simple: capture and use the
+initial input value from the API instead of ignoring it.
+
+This is a clean, well-isolated issue with a clear fix and known impact.
+================================================================================

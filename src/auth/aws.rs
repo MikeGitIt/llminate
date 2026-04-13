@@ -42,10 +42,9 @@ impl CredentialProvider for EnvCredentialProvider {
     async fn get_credentials(&self) -> Result<AwsCredentials> {
         debug!("@aws-sdk/credential-provider-env - fromEnv");
 
-        let access_key_id = env::var("AWS_ACCESS_KEY_ID")
-            .context("AWS_ACCESS_KEY_ID not found")?;
-        let secret_access_key = env::var("AWS_SECRET_ACCESS_KEY")
-            .context("AWS_SECRET_ACCESS_KEY not found")?;
+        let access_key_id = env::var("AWS_ACCESS_KEY_ID").context("AWS_ACCESS_KEY_ID not found")?;
+        let secret_access_key =
+            env::var("AWS_SECRET_ACCESS_KEY").context("AWS_SECRET_ACCESS_KEY not found")?;
 
         let session_token = env::var("AWS_SESSION_TOKEN").ok();
         let expiration = env::var("AWS_CREDENTIAL_EXPIRATION")
@@ -94,9 +93,9 @@ impl ContainerMetadataProvider {
 
             // Validate host
             let valid_hosts = ["localhost", "127.0.0.1"];
-            let host = url.host_str().ok_or_else(|| {
-                anyhow::anyhow!("Invalid container metadata service URL")
-            })?;
+            let host = url
+                .host_str()
+                .ok_or_else(|| anyhow::anyhow!("Invalid container metadata service URL"))?;
 
             if !valid_hosts.contains(&host) {
                 return Err(anyhow::anyhow!(
@@ -123,9 +122,7 @@ impl ContainerMetadataProvider {
     }
 
     async fn request_from_ecs_imds(&self, uri: &str) -> Result<AwsCredentials> {
-        let client = reqwest::Client::builder()
-            .timeout(self.timeout)
-            .build()?;
+        let client = reqwest::Client::builder().timeout(self.timeout).build()?;
 
         let mut request = client.get(uri);
 
@@ -178,9 +175,7 @@ impl InstanceMetadataProvider {
     }
 
     async fn get_credentials_from_imds(&self, endpoint: &str) -> Result<AwsCredentials> {
-        let client = reqwest::Client::builder()
-            .timeout(self.timeout)
-            .build()?;
+        let client = reqwest::Client::builder().timeout(self.timeout).build()?;
 
         // First get the token (IMDSv2)
         let token_response = client
@@ -193,7 +188,10 @@ impl InstanceMetadataProvider {
 
         // Get the role name
         let role_response = client
-            .get(format!("{}/latest/meta-data/iam/security-credentials/", endpoint))
+            .get(format!(
+                "{}/latest/meta-data/iam/security-credentials/",
+                endpoint
+            ))
             .header("X-aws-ec2-metadata-token", &token)
             .send()
             .await?;
@@ -203,7 +201,10 @@ impl InstanceMetadataProvider {
 
         // Get the credentials
         let creds_response = client
-            .get(format!("{}/latest/meta-data/iam/security-credentials/{}", endpoint, role_name))
+            .get(format!(
+                "{}/latest/meta-data/iam/security-credentials/{}",
+                endpoint, role_name
+            ))
             .header("X-aws-ec2-metadata-token", &token)
             .send()
             .await?;
@@ -240,7 +241,9 @@ impl InstanceMetadataProvider {
 impl CredentialProvider for InstanceMetadataProvider {
     async fn get_credentials(&self) -> Result<AwsCredentials> {
         if env::var("AWS_EC2_METADATA_DISABLED").unwrap_or_default() == "true" {
-            return Err(anyhow::anyhow!("EC2 Instance Metadata Service access disabled"));
+            return Err(anyhow::anyhow!(
+                "EC2 Instance Metadata Service access disabled"
+            ));
         }
 
         let endpoint = self.get_instance_metadata_endpoint().await;
@@ -254,7 +257,8 @@ impl CredentialProvider for InstanceMetadataProvider {
             }
         }
 
-        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Failed to get instance metadata credentials")))
+        Err(last_error
+            .unwrap_or_else(|| anyhow::anyhow!("Failed to get instance metadata credentials")))
     }
 }
 
@@ -330,17 +334,14 @@ impl SignatureV4 {
             &date_stamp,
             &self.region,
             &self.service,
-        );
+        )?;
 
-        let signature = self.calculate_signature(&signing_key, &string_to_sign);
+        let signature = self.calculate_signature(&signing_key, &string_to_sign)?;
 
         // Add authorization header
         let authorization = format!(
             "AWS4-HMAC-SHA256 Credential={}/{}, SignedHeaders={}, Signature={}",
-            credentials.access_key_id,
-            credential_scope,
-            signed_headers,
-            signature
+            credentials.access_key_id, credential_scope, signed_headers, signature
         );
 
         headers.insert("Authorization", authorization.parse()?);
@@ -349,8 +350,10 @@ impl SignatureV4 {
     }
 
     pub fn get_canonical_path(&self, uri: &str) -> String {
-        let url = reqwest::Url::parse(&format!("http://example.com{}", uri))
-            .unwrap_or_else(|_| reqwest::Url::parse("http://example.com/").unwrap());
+        let url = match reqwest::Url::parse(&format!("http://example.com{}", uri)) {
+            Ok(u) => u,
+            Err(_) => return "/".to_string(),
+        };
 
         let path = url.path();
 
@@ -400,8 +403,10 @@ impl SignatureV4 {
     }
 
     pub fn get_canonical_query_string(&self, uri: &str) -> String {
-        let url = reqwest::Url::parse(&format!("http://example.com{}", uri))
-            .unwrap_or_else(|_| reqwest::Url::parse("http://example.com/").unwrap());
+        let url = match reqwest::Url::parse(&format!("http://example.com{}", uri)) {
+            Ok(u) => u,
+            Err(_) => return String::new(),
+        };
 
         let mut params: Vec<(String, String)> = url
             .query_pairs()
@@ -429,10 +434,7 @@ impl SignatureV4 {
                     .split_whitespace()
                     .collect::<Vec<_>>()
                     .join(" ");
-                (
-                    name.as_str().to_lowercase(),
-                    normalized_value,
-                )
+                (name.as_str().to_lowercase(), normalized_value)
             })
             .collect();
 
@@ -461,22 +463,31 @@ impl SignatureV4 {
         hex::encode(hasher.finalize())
     }
 
-    pub fn get_signing_key(&self, secret: &str, date_stamp: &str, region: &str, service: &str) -> Vec<u8> {
+    pub fn get_signing_key(
+        &self,
+        secret: &str,
+        date_stamp: &str,
+        region: &str,
+        service: &str,
+    ) -> Result<Vec<u8>> {
         let k_secret = format!("AWS4{}", secret);
-        let k_date = self.hmac_sign(k_secret.as_bytes(), date_stamp.as_bytes());
-        let k_region = self.hmac_sign(&k_date, region.as_bytes());
-        let k_service = self.hmac_sign(&k_region, service.as_bytes());
+        let k_date = self.hmac_sign(k_secret.as_bytes(), date_stamp.as_bytes())?;
+        let k_region = self.hmac_sign(&k_date, region.as_bytes())?;
+        let k_service = self.hmac_sign(&k_region, service.as_bytes())?;
         self.hmac_sign(&k_service, b"aws4_request")
     }
 
-    fn hmac_sign(&self, key: &[u8], msg: &[u8]) -> Vec<u8> {
-        let mut mac = HmacSha256::new_from_slice(key).expect("HMAC can take key of any size");
+    fn hmac_sign(&self, key: &[u8], msg: &[u8]) -> Result<Vec<u8>> {
+        let mut mac = HmacSha256::new_from_slice(key)
+            .map_err(|e| anyhow::anyhow!("HMAC key error: {}", e))?;
         mac.update(msg);
-        mac.finalize().into_bytes().to_vec()
+        Ok(mac.finalize().into_bytes().to_vec())
     }
 
-    fn calculate_signature(&self, signing_key: &[u8], string_to_sign: &str) -> String {
-        hex::encode(self.hmac_sign(signing_key, string_to_sign.as_bytes()))
+    fn calculate_signature(&self, signing_key: &[u8], string_to_sign: &str) -> Result<String> {
+        Ok(hex::encode(
+            self.hmac_sign(signing_key, string_to_sign.as_bytes())?,
+        ))
     }
 }
 
@@ -493,7 +504,8 @@ impl IniFileProvider {
     }
 
     async fn parse_known_files(&self) -> Result<HashMap<String, HashMap<String, String>>> {
-        let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?;
+        let home =
+            dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?;
         let credentials_path = home.join(".aws").join("credentials");
         let config_path = home.join(".aws").join("config");
 
@@ -514,7 +526,11 @@ impl IniFileProvider {
         Ok(profiles)
     }
 
-    fn parse_ini_file(&self, content: &str, profiles: &mut HashMap<String, HashMap<String, String>>) {
+    fn parse_ini_file(
+        &self,
+        content: &str,
+        profiles: &mut HashMap<String, HashMap<String, String>>,
+    ) {
         let mut current_profile: Option<String> = None;
 
         for line in content.lines() {
@@ -529,9 +545,13 @@ impl IniFileProvider {
             if trimmed.starts_with('[') && trimmed.ends_with(']') {
                 let profile_name = trimmed[1..trimmed.len() - 1].trim();
                 // Remove "profile " prefix if present (common in config file)
-                let profile_name = profile_name.strip_prefix("profile ").unwrap_or(profile_name);
+                let profile_name = profile_name
+                    .strip_prefix("profile ")
+                    .unwrap_or(profile_name);
                 current_profile = Some(profile_name.to_string());
-                profiles.entry(profile_name.to_string()).or_insert_with(HashMap::new);
+                profiles
+                    .entry(profile_name.to_string())
+                    .or_insert_with(HashMap::new);
                 continue;
             }
 
@@ -547,7 +567,8 @@ impl IniFileProvider {
     }
 
     fn get_profile_name(&self) -> String {
-        self.profile.clone()
+        self.profile
+            .clone()
             .or_else(|| env::var("AWS_PROFILE").ok())
             .unwrap_or_else(|| "default".to_string())
     }
@@ -561,16 +582,18 @@ impl CredentialProvider for IniFileProvider {
         let profiles = self.parse_known_files().await?;
         let profile_name = self.get_profile_name();
 
-        let profile = profiles.get(&profile_name)
-            .ok_or_else(|| anyhow::anyhow!(
+        let profile = profiles.get(&profile_name).ok_or_else(|| {
+            anyhow::anyhow!(
                 "Profile {} could not be found in shared credentials file",
                 profile_name
-            ))?;
+            )
+        })?;
 
         // Check for static credentials
-        if let (Some(access_key), Some(secret_key)) =
-            (profile.get("aws_access_key_id"), profile.get("aws_secret_access_key")) {
-
+        if let (Some(access_key), Some(secret_key)) = (
+            profile.get("aws_access_key_id"),
+            profile.get("aws_secret_access_key"),
+        ) {
             return Ok(AwsCredentials {
                 access_key_id: access_key.clone(),
                 secret_access_key: secret_key.clone(),
@@ -644,7 +667,8 @@ impl CredentialProvider for DefaultCredentialProvider {
             }
         }
 
-        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Could not load credentials from any providers")))
+        Err(last_error
+            .unwrap_or_else(|| anyhow::anyhow!("Could not load credentials from any providers")))
     }
 }
 
@@ -681,9 +705,10 @@ impl CredentialProvider for MemoizedProvider {
 
         // Calculate expiry (default to 15 minutes)
         let expiry = if let Some(exp) = &creds.expiration {
-            std::time::Instant::now() + std::time::Duration::from_secs(
-                (exp.timestamp() - Utc::now().timestamp()).max(0) as u64
-            )
+            std::time::Instant::now()
+                + std::time::Duration::from_secs(
+                    (exp.timestamp() - Utc::now().timestamp()).max(0) as u64
+                )
         } else {
             std::time::Instant::now() + std::time::Duration::from_secs(15 * 60)
         };
@@ -733,8 +758,14 @@ mod tests {
     fn test_sigv4_canonical_query_string() {
         let signer = SignatureV4::new("us-east-1".to_string(), "s3".to_string());
 
-        assert_eq!(signer.get_canonical_query_string("/path?b=2&a=1"), "a=1&b=2");
-        assert_eq!(signer.get_canonical_query_string("/path?foo=bar"), "foo=bar");
+        assert_eq!(
+            signer.get_canonical_query_string("/path?b=2&a=1"),
+            "a=1&b=2"
+        );
+        assert_eq!(
+            signer.get_canonical_query_string("/path?foo=bar"),
+            "foo=bar"
+        );
         assert_eq!(signer.get_canonical_query_string("/path"), "");
     }
 
@@ -743,9 +774,15 @@ mod tests {
         let signer = SignatureV4::new("us-east-1".to_string(), "s3".to_string());
 
         let empty_hash = signer.hash_payload(b"");
-        assert_eq!(empty_hash, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+        assert_eq!(
+            empty_hash,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
 
         let test_hash = signer.hash_payload(b"test");
-        assert_eq!(test_hash, "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08");
+        assert_eq!(
+            test_hash,
+            "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+        );
     }
 }

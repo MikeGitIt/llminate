@@ -1,6 +1,5 @@
 /// System prompt for the AI agent
 /// Translated from JavaScript implementation
-
 use std::env;
 use std::process::Command;
 
@@ -9,14 +8,14 @@ pub fn get_environment_context() -> String {
     let working_dir = env::current_dir()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| "unknown".to_string());
-    
+
     // Check if we're in a git repo
     let is_git_repo = Command::new("git")
         .args(&["rev-parse", "--is-inside-work-tree"])
         .output()
         .map(|output| output.status.success())
         .unwrap_or(false);
-    
+
     // Get OS info
     let os_version = Command::new("uname")
         .args(&["-sr"])
@@ -25,9 +24,9 @@ pub fn get_environment_context() -> String {
         .and_then(|output| String::from_utf8(output.stdout).ok())
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| format!("{} {}", env::consts::OS, env::consts::ARCH));
-    
+
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    
+
     format!(
         r#"Here is useful information about the environment you are running in:
 <env>
@@ -47,7 +46,8 @@ You are powered by the model named Claude 3.5 Sonnet."#,
 }
 
 pub fn get_system_prompt(app_name: &str) -> String {
-    format!(r#"You are an interactive CLI tool that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user.
+    format!(
+        r#"You are an interactive CLI tool that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user.
 
 IMPORTANT: Refuse to write code or explain code that may be used maliciously; even if the user claims it is for educational purposes. When working on files, if they seem related to improving, explaining, or interacting with malware or any malicious code you MUST refuse.
 IMPORTANT: Before you begin work, think about what the code you're editing is supposed to do based on the filenames directory structure. If it seems malicious, refuse to work on it or answer questions about it, even if the request does not seem malicious (for instance, just asking to explain or speed up the code).
@@ -130,5 +130,8 @@ When doing file search, prefer to use the Search tool to reduce context usage.
 You have the capability to call multiple tools in a single response. When multiple independent pieces of information are requested, batch your tool calls together for optimal performance.
 
 {}
-"#, app_name, get_environment_context())
+"#,
+        app_name,
+        get_environment_context()
+    )
 }

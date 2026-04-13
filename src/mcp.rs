@@ -74,14 +74,14 @@ pub struct McpCommand {
 /// Start MCP server
 pub async fn serve(debug: bool, verbose: bool) -> Result<()> {
     let cwd = std::env::current_dir()?;
-    
+
     if !cwd.exists() {
         eprintln!("Error: Directory {} does not exist", cwd.display());
         std::process::exit(1);
     }
-    
+
     println!("Starting MCP server in {}...", cwd.display());
-    
+
     // In a real implementation, this would start the MCP server
     // For now, we'll simulate it
     loop {
@@ -100,48 +100,56 @@ pub async fn add_server(
     headers: Vec<String>,
 ) -> Result<()> {
     let mut config = config::load_config(scope)?;
-    
+
     if config.mcp_servers.is_none() {
         config.mcp_servers = Some(HashMap::new());
     }
-    
+
     let servers = config.mcp_servers.as_mut().unwrap();
-    
+
     let server_config = match transport {
         TransportType::Stdio => {
             let env_map = parse_env_vars(&env)?;
-            
+
             McpServerConfig {
                 transport_type: Some("stdio".to_string()),
                 command: Some(command_or_url.to_string()),
                 args: if args.is_empty() { None } else { Some(args) },
                 url: None,
                 headers: None,
-                env: if env_map.is_empty() { None } else { Some(env_map) },
+                env: if env_map.is_empty() {
+                    None
+                } else {
+                    Some(env_map)
+                },
             }
         }
         TransportType::Sse | TransportType::Http => {
             let headers_map = parse_headers(&headers)?;
-            
+
             McpServerConfig {
                 transport_type: Some(transport.to_string()),
                 command: None,
                 args: None,
                 url: Some(command_or_url.to_string()),
-                headers: if headers_map.is_empty() { None } else { Some(headers_map) },
+                headers: if headers_map.is_empty() {
+                    None
+                } else {
+                    Some(headers_map)
+                },
                 env: None,
             }
         }
     };
-    
+
     servers.insert(name.to_string(), server_config);
     config::save_config(scope, &config)?;
-    
+
     println!(
         "Added {} MCP server {} to {} config",
         transport, name, scope
     );
-    
+
     Ok(())
 }
 
@@ -150,7 +158,7 @@ pub async fn remove_server(name: &str, scope: Option<ConfigScope>) -> Result<()>
     if let Some(scope) = scope {
         // Remove from specific scope
         let mut config = config::load_config(scope)?;
-        
+
         if let Some(ref mut servers) = config.mcp_servers {
             if servers.remove(name).is_some() {
                 config::save_config(scope, &config)?;
@@ -158,16 +166,16 @@ pub async fn remove_server(name: &str, scope: Option<ConfigScope>) -> Result<()>
                 return Ok(());
             }
         }
-        
+
         return Err(Error::Config(format!(
             "No MCP server found with name: \"{}\"",
             name
         )));
     }
-    
+
     // Try to find and remove from any scope
     let mut found_scopes = Vec::new();
-    
+
     for scope in [ConfigScope::Local, ConfigScope::Project, ConfigScope::User] {
         if let Ok(config) = config::load_config(scope) {
             if let Some(servers) = &config.mcp_servers {
@@ -177,7 +185,7 @@ pub async fn remove_server(name: &str, scope: Option<ConfigScope>) -> Result<()>
             }
         }
     }
-    
+
     match found_scopes.len() {
         0 => Err(Error::Config(format!(
             "No MCP server found with name: \"{}\"",
@@ -208,7 +216,7 @@ pub async fn remove_server(name: &str, scope: Option<ConfigScope>) -> Result<()>
 /// List all MCP servers
 pub async fn list_servers() -> Result<()> {
     let servers = config::get_all_mcp_servers()?;
-    
+
     if servers.is_empty() {
         println!("No MCP servers configured. Use `llminate mcp add` to add a server.");
     } else {
@@ -232,20 +240,20 @@ pub async fn list_servers() -> Result<()> {
             }
         }
     }
-    
+
     Ok(())
 }
 
 /// Get details about an MCP server
 pub async fn get_server(name: &str) -> Result<()> {
     let servers = config::get_all_mcp_servers()?;
-    
+
     let server = servers
         .get(name)
         .ok_or_else(|| Error::Config(format!("No MCP server found with name: {}", name)))?;
-    
+
     println!("{}:", name);
-    
+
     match server.transport_type.as_deref() {
         Some("sse") => {
             println!("  Type: sse");
@@ -281,58 +289,62 @@ pub async fn get_server(name: &str) -> Result<()> {
             }
         }
     }
-    
+
     Ok(())
 }
 
 /// Add server from JSON
 pub async fn add_server_json(name: &str, json: &str, scope: ConfigScope) -> Result<()> {
-    let server_config: McpServerConfig = serde_json::from_str(json)
-        .context("Invalid JSON for MCP server configuration")?;
-    
+    let server_config: McpServerConfig =
+        serde_json::from_str(json).context("Invalid JSON for MCP server configuration")?;
+
     let mut config = config::load_config(scope)?;
-    
+
     if config.mcp_servers.is_none() {
         config.mcp_servers = Some(HashMap::new());
     }
-    
-    config.mcp_servers.as_mut().unwrap().insert(name.to_string(), server_config);
+
+    config
+        .mcp_servers
+        .as_mut()
+        .unwrap()
+        .insert(name.to_string(), server_config);
     config::save_config(scope, &config)?;
-    
+
     println!("Added MCP server {} to {} config", name, scope);
-    
+
     Ok(())
 }
 
 /// Import servers from Claude Desktop configuration
 pub async fn add_from_claude_desktop(scope: ConfigScope) -> Result<()> {
     let claude_config_path = get_claude_desktop_config_path()?;
-    
+
     if !claude_config_path.exists() {
         println!("No Claude Desktop configuration found.");
         return Ok(());
     }
-    
+
     let content = std::fs::read_to_string(&claude_config_path)?;
     let claude_config: Value = serde_json::from_str(&content)?;
-    
+
     if let Some(mcp_servers) = claude_config.get("mcpServers").and_then(|v| v.as_object()) {
         let mut config = config::load_config(scope)?;
-        
+
         if config.mcp_servers.is_none() {
             config.mcp_servers = Some(HashMap::new());
         }
-        
+
         let servers = config.mcp_servers.as_mut().unwrap();
         let mut imported = 0;
-        
+
         for (name, value) in mcp_servers {
             if let Ok(server_config) = serde_json::from_value::<McpServerConfig>(value.clone()) {
                 servers.insert(name.clone(), server_config);
                 imported += 1;
             }
         }
-        
+
         if imported > 0 {
             config::save_config(scope, &config)?;
             println!(
@@ -347,23 +359,23 @@ pub async fn add_from_claude_desktop(scope: ConfigScope) -> Result<()> {
     } else {
         println!("No MCP servers found in Claude Desktop configuration.");
     }
-    
+
     Ok(())
 }
 
 /// Reset project MCP choices
 pub async fn reset_project_choices() -> Result<()> {
     let mut config = config::load_config(ConfigScope::Local)?;
-    
+
     config.enabled_mcpjson_servers = Some(Vec::new());
     config.disabled_mcpjson_servers = Some(Vec::new());
     config.enable_all_project_mcp_servers = Some(false);
-    
+
     config::save_config(ConfigScope::Local, &config)?;
-    
+
     println!("All project-scoped (.mcp.json) server approvals and rejections have been reset.");
     println!("You will be prompted for approval next time you start llminate.");
-    
+
     Ok(())
 }
 
@@ -373,21 +385,21 @@ pub fn parse_config(config_str: &str) -> Result<HashMap<String, McpServerConfig>
     if let Ok(json_config) = serde_json::from_str::<HashMap<String, McpServerConfig>>(config_str) {
         return Ok(json_config);
     }
-    
+
     // Try to load as file
     if let Ok(content) = std::fs::read_to_string(config_str) {
-        let file_config: HashMap<String, McpServerConfig> = serde_json::from_str(&content)
-            .context("Invalid MCP configuration file")?;
+        let file_config: HashMap<String, McpServerConfig> =
+            serde_json::from_str(&content).context("Invalid MCP configuration file")?;
         return Ok(file_config);
     }
-    
+
     Err(Error::Config("Invalid MCP configuration".to_string()))
 }
 
 /// Parse environment variables
 fn parse_env_vars(env: &[String]) -> Result<HashMap<String, String>> {
     let mut map = HashMap::new();
-    
+
     for var in env {
         let parts: Vec<&str> = var.splitn(2, '=').collect();
         if parts.len() != 2 {
@@ -398,14 +410,14 @@ fn parse_env_vars(env: &[String]) -> Result<HashMap<String, String>> {
         }
         map.insert(parts[0].to_string(), parts[1].to_string());
     }
-    
+
     Ok(map)
 }
 
 /// Parse HTTP headers
 fn parse_headers(headers: &[String]) -> Result<HashMap<String, String>> {
     let mut map = HashMap::new();
-    
+
     for header in headers {
         let parts: Vec<&str> = header.splitn(2, ':').collect();
         if parts.len() != 2 {
@@ -414,12 +426,9 @@ fn parse_headers(headers: &[String]) -> Result<HashMap<String, String>> {
                 header
             )));
         }
-        map.insert(
-            parts[0].trim().to_string(),
-            parts[1].trim().to_string(),
-        );
+        map.insert(parts[0].trim().to_string(), parts[1].trim().to_string());
     }
-    
+
     Ok(map)
 }
 
@@ -434,7 +443,7 @@ fn get_claude_desktop_config_path() -> Result<std::path::PathBuf> {
             .join("Claude")
             .join("claude_desktop_config.json"))
     }
-    
+
     #[cfg(target_os = "windows")]
     {
         Ok(dirs::config_dir()
@@ -442,7 +451,7 @@ fn get_claude_desktop_config_path() -> Result<std::path::PathBuf> {
             .join("Claude")
             .join("claude_desktop_config.json"))
     }
-    
+
     #[cfg(target_os = "linux")]
     {
         Ok(dirs::config_dir()
@@ -464,37 +473,39 @@ pub async fn start_client(name: String, config: McpServerConfig) -> Result<McpCl
 
 /// Start stdio MCP client
 async fn start_stdio_client(name: String, config: McpServerConfig) -> Result<McpClient> {
-    let command = config.command
+    let command = config
+        .command
         .ok_or_else(|| Error::Config("Missing command for stdio transport".to_string()))?;
-    
+
     let mut cmd = Command::new(&command);
-    
+
     if let Some(args) = &config.args {
         cmd.args(args);
     }
-    
+
     if let Some(env) = &config.env {
         cmd.envs(env);
     }
-    
+
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    
-    let mut process = cmd.spawn()
+
+    let mut process = cmd
+        .spawn()
         .with_context(|| format!("Failed to start MCP server: {}", command))?;
-    
+
     let stdin = process.stdin.take().unwrap();
     let stdout = process.stdout.take().unwrap();
-    
+
     let (tx, rx) = mpsc::unbounded_channel();
     let (response_tx, response_rx) = mpsc::unbounded_channel();
-    
+
     // Spawn task to handle communication
     tokio::spawn(async move {
         handle_stdio_communication(stdin, stdout, rx, response_tx).await;
     });
-    
+
     Ok(McpClient {
         name,
         transport: TransportType::Stdio,
@@ -507,7 +518,8 @@ async fn start_stdio_client(name: String, config: McpServerConfig) -> Result<Mcp
 /// Start SSE MCP client
 /// SSE transport uses Server-Sent Events for receiving messages and HTTP POST for sending
 async fn start_sse_client(name: String, config: McpServerConfig) -> Result<McpClient> {
-    let url = config.url
+    let url = config
+        .url
         .ok_or_else(|| Error::Config("Missing URL for SSE transport".to_string()))?;
 
     let (tx, rx) = mpsc::unbounded_channel();
@@ -519,7 +531,7 @@ async fn start_sse_client(name: String, config: McpServerConfig) -> Result<McpCl
         for (key, value) in config_headers {
             if let (Ok(name), Ok(val)) = (
                 reqwest::header::HeaderName::from_bytes(key.as_bytes()),
-                reqwest::header::HeaderValue::from_str(value)
+                reqwest::header::HeaderValue::from_str(value),
             ) {
                 headers.insert(name, val);
             }
@@ -546,7 +558,8 @@ async fn start_sse_client(name: String, config: McpServerConfig) -> Result<McpCl
 /// Start HTTP MCP client
 /// HTTP transport uses HTTP POST for both sending and receiving (request/response)
 async fn start_http_client(name: String, config: McpServerConfig) -> Result<McpClient> {
-    let url = config.url
+    let url = config
+        .url
         .ok_or_else(|| Error::Config("Missing URL for HTTP transport".to_string()))?;
 
     let (tx, rx) = mpsc::unbounded_channel();
@@ -556,13 +569,13 @@ async fn start_http_client(name: String, config: McpServerConfig) -> Result<McpC
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(
         reqwest::header::CONTENT_TYPE,
-        reqwest::header::HeaderValue::from_static("application/json")
+        reqwest::header::HeaderValue::from_static("application/json"),
     );
     if let Some(config_headers) = &config.headers {
         for (key, value) in config_headers {
             if let (Ok(name), Ok(val)) = (
                 reqwest::header::HeaderName::from_bytes(key.as_bytes()),
-                reqwest::header::HeaderValue::from_str(value)
+                reqwest::header::HeaderValue::from_str(value),
             ) {
                 headers.insert(name, val);
             }
@@ -596,7 +609,8 @@ async fn handle_sse_communication(
     let mut post_endpoint: Option<String> = None;
 
     // First, establish SSE connection
-    let sse_response = match client.get(&url)
+    let sse_response = match client
+        .get(&url)
         .headers(headers.clone())
         .header("Accept", "text/event-stream")
         .send()
@@ -610,7 +624,10 @@ async fn handle_sse_communication(
     };
 
     if !sse_response.status().is_success() {
-        eprintln!("SSE connection failed with status: {}", sse_response.status());
+        eprintln!(
+            "SSE connection failed with status: {}",
+            sse_response.status()
+        );
         return;
     }
 
@@ -713,7 +730,8 @@ async fn handle_http_communication(
             "params": request.params
         });
 
-        match client.post(&url)
+        match client
+            .post(&url)
             .headers(headers.clone())
             .json(&json_rpc)
             .send()
@@ -724,9 +742,15 @@ async fn handle_http_communication(
                     match resp.json::<Value>().await {
                         Ok(json) => {
                             let response = McpResponse {
-                                id: json.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                id: json
+                                    .get("id")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
                                 result: json.get("result").cloned(),
-                                error: json.get("error").and_then(|e| serde_json::from_value(e.clone()).ok()),
+                                error: json
+                                    .get("error")
+                                    .and_then(|e| serde_json::from_value(e.clone()).ok()),
                             };
                             let _ = response_tx.send(response);
                         }
@@ -814,7 +838,8 @@ impl McpClient {
             params,
         };
 
-        self.sender.send(request)
+        self.sender
+            .send(request)
             .map_err(|e| Error::Other(format!("Failed to send request: {}", e)))?;
 
         // Wait for response with timeout
@@ -826,11 +851,19 @@ impl McpClient {
                 return Err(Error::Timeout("MCP request timed out".to_string()));
             }
 
-            match tokio::time::timeout(tokio::time::Duration::from_millis(100), self.receiver.recv()).await {
+            match tokio::time::timeout(
+                tokio::time::Duration::from_millis(100),
+                self.receiver.recv(),
+            )
+            .await
+            {
                 Ok(Some(response)) => {
                     if response.id == id {
                         if let Some(error) = response.error {
-                            return Err(Error::Other(format!("MCP error: {} (code: {})", error.message, error.code)));
+                            return Err(Error::Other(format!(
+                                "MCP error: {} (code: {})",
+                                error.message, error.code
+                            )));
                         }
                         return Ok(response.result.unwrap_or(Value::Null));
                     }
@@ -878,14 +911,19 @@ impl McpClient {
     pub async fn list_tools(&mut self) -> Result<Vec<McpTool>> {
         let result = self.request("tools/list", None).await?;
 
-        let tools = result.get("tools")
+        let tools = result
+            .get("tools")
             .and_then(|t| t.as_array())
             .map(|arr| {
                 arr.iter()
                     .filter_map(|v| {
                         Some(McpTool {
                             name: v.get("name")?.as_str()?.to_string(),
-                            description: v.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string(),
+                            description: v
+                                .get("description")
+                                .and_then(|d| d.as_str())
+                                .unwrap_or("")
+                                .to_string(),
                             input_schema: v.get("inputSchema").cloned().unwrap_or(Value::Null),
                         })
                     })
@@ -911,16 +949,27 @@ impl McpClient {
     pub async fn list_resources(&mut self) -> Result<Vec<McpResource>> {
         let result = self.request("resources/list", None).await?;
 
-        let resources = result.get("resources")
+        let resources = result
+            .get("resources")
             .and_then(|r| r.as_array())
             .map(|arr| {
                 arr.iter()
                     .filter_map(|v| {
                         Some(McpResource {
                             uri: v.get("uri")?.as_str()?.to_string(),
-                            name: v.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string(),
-                            description: v.get("description").and_then(|d| d.as_str()).map(|s| s.to_string()),
-                            mime_type: v.get("mimeType").and_then(|m| m.as_str()).map(|s| s.to_string()),
+                            name: v
+                                .get("name")
+                                .and_then(|n| n.as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                            description: v
+                                .get("description")
+                                .and_then(|d| d.as_str())
+                                .map(|s| s.to_string()),
+                            mime_type: v
+                                .get("mimeType")
+                                .and_then(|m| m.as_str())
+                                .map(|s| s.to_string()),
                         })
                     })
                     .collect()
@@ -939,12 +988,15 @@ impl McpClient {
         let result = self.request("resources/read", Some(params)).await?;
 
         // Extract content from response
-        let contents = result.get("contents")
+        let contents = result
+            .get("contents")
             .and_then(|c| c.as_array())
             .and_then(|arr| arr.first())
             .and_then(|content| {
                 // Try text first, then blob
-                content.get("text").and_then(|t| t.as_str())
+                content
+                    .get("text")
+                    .and_then(|t| t.as_str())
                     .or_else(|| content.get("blob").and_then(|b| b.as_str()))
             })
             .unwrap_or("");

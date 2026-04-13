@@ -10,14 +10,14 @@ pub fn run(args: &[String]) -> i32 {
         .stderr(Stdio::inherit())
         .status()
     {
-        Ok(status) => {
-            status.code().unwrap_or(1)
-        }
+        Ok(status) => status.code().unwrap_or(1),
         Err(_) => {
             // If ripgrep is not installed, fall back to basic grep functionality
-            eprintln!("ripgrep (rg) is not installed. Please install it for better search functionality.");
+            eprintln!(
+                "ripgrep (rg) is not installed. Please install it for better search functionality."
+            );
             eprintln!("Visit: https://github.com/BurntSushi/ripgrep#installation");
-            
+
             // Try to use grep as fallback
             match Command::new("grep")
                 .args(convert_rg_to_grep_args(args))
@@ -40,13 +40,13 @@ pub fn run(args: &[String]) -> i32 {
 fn convert_rg_to_grep_args(rg_args: &[String]) -> Vec<String> {
     let mut grep_args = Vec::new();
     let mut skip_next = false;
-    
+
     for (i, arg) in rg_args.iter().enumerate() {
         if skip_next {
             skip_next = false;
             continue;
         }
-        
+
         match arg.as_str() {
             "-i" | "--ignore-case" => grep_args.push("-i".to_string()),
             "-v" | "--invert-match" => grep_args.push("-v".to_string()),
@@ -79,6 +79,6 @@ fn convert_rg_to_grep_args(rg_args: &[String]) -> Vec<String> {
             }
         }
     }
-    
+
     grep_args
 }

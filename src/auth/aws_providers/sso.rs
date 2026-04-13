@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use tokio::fs;
 use tracing::debug;
 
-use super::{Credentials, CredentialProvider, CredentialsProviderError};
+use super::{CredentialProvider, Credentials, CredentialsProviderError};
 
 /// SSO Session data structure (matches AWS CLI config)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,7 +73,10 @@ impl Logger for ConsoleLogger {
 #[async_trait]
 pub trait SsoClient: Send + Sync + std::fmt::Debug {
     /// Get SSO role credentials
-    async fn get_role_credentials(&self, params: &GetRoleCredentialsParams) -> Result<SsoRoleCredentials>;
+    async fn get_role_credentials(
+        &self,
+        params: &GetRoleCredentialsParams,
+    ) -> Result<SsoRoleCredentials>;
 }
 
 /// Parameters for getting SSO role credentials
@@ -109,7 +112,10 @@ impl HttpSsoClient {
 
 #[async_trait]
 impl SsoClient for HttpSsoClient {
-    async fn get_role_credentials(&self, params: &GetRoleCredentialsParams) -> Result<SsoRoleCredentials> {
+    async fn get_role_credentials(
+        &self,
+        params: &GetRoleCredentialsParams,
+    ) -> Result<SsoRoleCredentials> {
         let client = reqwest::Client::new();
         let url = format!(
             "{}/federation/credentials?account_id={}&role_name={}",
@@ -126,14 +132,20 @@ impl SsoClient for HttpSsoClient {
 
         if !response.status().is_success() {
             let status = response.status();
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             return Err(CredentialsProviderError::new(format!(
                 "SSO get role credentials failed: {} - {}",
                 status, error_text
-            )).into());
+            ))
+            .into());
         }
 
-        let credentials_response: serde_json::Value = response.json().await
+        let credentials_response: serde_json::Value = response
+            .json()
+            .await
             .context("Failed to parse SSO credentials response")?;
 
         let role_credentials = credentials_response
@@ -149,7 +161,9 @@ impl SsoClient for HttpSsoClient {
         let secret_access_key = role_credentials
             .get("secretAccessKey")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| CredentialsProviderError::new("No secretAccessKey in SSO roleCredentials"))?
+            .ok_or_else(|| {
+                CredentialsProviderError::new("No secretAccessKey in SSO roleCredentials")
+            })?
             .to_string();
 
         let session_token = role_credentials
@@ -184,20 +198,17 @@ impl SsoCredentialsProvider {
         let config = sync_validate_and_resolve_sso_config(params)?;
         let sso_client = Box::new(HttpSsoClient::new(config.sso_region.clone()));
 
-        Ok(Self {
-            config,
-            sso_client,
-        })
+        Ok(Self { config, sso_client })
     }
 
     /// Create with custom SSO client (for testing)
-    pub fn with_sso_client(params: SsoCredentialsParams, sso_client: Box<dyn SsoClient>) -> Result<Self> {
+    pub fn with_sso_client(
+        params: SsoCredentialsParams,
+        sso_client: Box<dyn SsoClient>,
+    ) -> Result<Self> {
         let config = sync_validate_and_resolve_sso_config(params)?;
 
-        Ok(Self {
-            config,
-            sso_client,
-        })
+        Ok(Self { config, sso_client })
     }
 
     /// Get SSO access token from cache
@@ -212,11 +223,12 @@ impl SsoCredentialsProvider {
             )).into());
         }
 
-        let cache_content = fs::read_to_string(&cache_file_path).await
+        let cache_content = fs::read_to_string(&cache_file_path)
+            .await
             .context("Failed to read SSO cache file")?;
 
-        let cache_data: serde_json::Value = serde_json::from_str(&cache_content)
-            .context("Failed to parse SSO cache file")?;
+        let cache_data: serde_json::Value =
+            serde_json::from_str(&cache_content).context("Failed to parse SSO cache file")?;
 
         let access_token = cache_data
             .get("accessToken")
@@ -260,22 +272,27 @@ impl SsoCredentialsProvider {
 #[async_trait]
 impl CredentialProvider for SsoCredentialsProvider {
     async fn provide_credentials(&self) -> Result<Credentials> {
-        debug!("Getting SSO credentials for account {} role {}",
-               self.config.sso_account_id, self.config.sso_role_name);
+        debug!(
+            "Getting SSO credentials for account {} role {}",
+            self.config.sso_account_id, self.config.sso_role_name
+        );
 
         // Get SSO access token from cache
         let access_token = self.get_sso_access_token().await?;
 
         // Get role credentials using SSO client
-        let role_creds = self.sso_client.get_role_credentials(&GetRoleCredentialsParams {
-            access_token,
-            account_id: self.config.sso_account_id.clone(),
-            role_name: self.config.sso_role_name.clone(),
-        }).await?;
+        let role_creds = self
+            .sso_client
+            .get_role_credentials(&GetRoleCredentialsParams {
+                access_token,
+                account_id: self.config.sso_account_id.clone(),
+                role_name: self.config.sso_role_name.clone(),
+            })
+            .await?;
 
         // Convert expiration from Unix timestamp to DateTime
-        let expiration = DateTime::from_timestamp(role_creds.expiration, 0)
-            .map(|dt| dt.with_timezone(&Utc));
+        let expiration =
+            DateTime::from_timestamp(role_creds.expiration, 0).map(|dt| dt.with_timezone(&Utc));
 
         Ok(Credentials {
             access_key_id: role_creds.access_key_id,
@@ -292,24 +309,48 @@ impl CredentialProvider for SsoCredentialsProvider {
 
 /// Check if a profile is an SSO profile (matches JavaScript isSsoProfile)
 pub fn is_sso_profile(profile: &HashMap<String, String>) -> bool {
-    profile.get("sso_start_url").map(|s| !s.is_empty()).unwrap_or(false) ||
-    profile.get("sso_account_id").map(|s| !s.is_empty()).unwrap_or(false) ||
-    profile.get("sso_session").map(|s| !s.is_empty()).unwrap_or(false) ||
-    profile.get("sso_region").map(|s| !s.is_empty()).unwrap_or(false) ||
-    profile.get("sso_role_name").map(|s| !s.is_empty()).unwrap_or(false)
+    profile
+        .get("sso_start_url")
+        .map(|s| !s.is_empty())
+        .unwrap_or(false)
+        || profile
+            .get("sso_account_id")
+            .map(|s| !s.is_empty())
+            .unwrap_or(false)
+        || profile
+            .get("sso_session")
+            .map(|s| !s.is_empty())
+            .unwrap_or(false)
+        || profile
+            .get("sso_region")
+            .map(|s| !s.is_empty())
+            .unwrap_or(false)
+        || profile
+            .get("sso_role_name")
+            .map(|s| !s.is_empty())
+            .unwrap_or(false)
 }
 
 /// Validate SSO profile configuration (matches JavaScript validateSsoProfile)
-pub fn validate_sso_profile(profile: &ValidatedSsoConfig, profile_name: &str) -> Result<ValidatedSsoConfig> {
+pub fn validate_sso_profile(
+    profile: &ValidatedSsoConfig,
+    profile_name: &str,
+) -> Result<ValidatedSsoConfig> {
     let config_description = if let Some(ref session) = profile.sso_session {
-        format!(" configurations in profile {} and sso-session {}", profile_name, session)
+        format!(
+            " configurations in profile {} and sso-session {}",
+            profile_name, session
+        )
     } else {
         format!(" configuration in profile {}", profile_name)
     };
 
     // Check required fields (matches JavaScript exact error message)
-    if profile.sso_start_url.is_empty() || profile.sso_account_id.is_empty() ||
-       profile.sso_region.is_empty() || profile.sso_role_name.is_empty() {
+    if profile.sso_start_url.is_empty()
+        || profile.sso_account_id.is_empty()
+        || profile.sso_region.is_empty()
+        || profile.sso_role_name.is_empty()
+    {
         return Err(CredentialsProviderError::new(format!(
             r#"Incomplete configuration. The fromSSO() argument hash must include "ssoStartUrl", "ssoAccountId", "ssoRegion", "ssoRoleName"{}"#,
             config_description
@@ -320,7 +361,9 @@ pub fn validate_sso_profile(profile: &ValidatedSsoConfig, profile_name: &str) ->
 }
 
 /// Parse known AWS config files
-async fn parse_known_files(params: &SsoCredentialsParams) -> Result<HashMap<String, HashMap<String, String>>> {
+async fn parse_known_files(
+    params: &SsoCredentialsParams,
+) -> Result<HashMap<String, HashMap<String, String>>> {
     use std::env;
 
     let mut profiles = HashMap::new();
@@ -333,14 +376,16 @@ async fn parse_known_files(params: &SsoCredentialsParams) -> Result<HashMap<Stri
 
     // Parse config file if it exists
     if config_file.exists() {
-        let content = fs::read_to_string(&config_file).await
+        let content = fs::read_to_string(&config_file)
+            .await
             .context("Failed to read AWS config file")?;
         parse_ini_file(&content, &mut profiles, true)?;
     }
 
     // Parse credentials file if it exists
     if credentials_file.exists() {
-        let content = fs::read_to_string(&credentials_file).await
+        let content = fs::read_to_string(&credentials_file)
+            .await
             .context("Failed to read AWS credentials file")?;
         parse_ini_file(&content, &mut profiles, false)?;
     }
@@ -348,7 +393,8 @@ async fn parse_known_files(params: &SsoCredentialsParams) -> Result<HashMap<Stri
     // Override with any client config provided
     if let Some(ref client_config) = params.client_config {
         if let Some(profile_name) = params.profile.as_ref() {
-            profiles.entry(profile_name.clone())
+            profiles
+                .entry(profile_name.clone())
                 .or_insert_with(HashMap::new)
                 .extend(client_config.clone());
         }
@@ -358,7 +404,11 @@ async fn parse_known_files(params: &SsoCredentialsParams) -> Result<HashMap<Stri
 }
 
 /// Parse INI file content into profiles
-fn parse_ini_file(content: &str, profiles: &mut HashMap<String, HashMap<String, String>>, is_config: bool) -> Result<()> {
+fn parse_ini_file(
+    content: &str,
+    profiles: &mut HashMap<String, HashMap<String, String>>,
+    is_config: bool,
+) -> Result<()> {
     let mut current_section = String::new();
 
     for line in content.lines() {
@@ -371,7 +421,7 @@ fn parse_ini_file(content: &str, profiles: &mut HashMap<String, HashMap<String, 
 
         // Section header
         if line.starts_with('[') && line.ends_with(']') {
-            current_section = line[1..line.len()-1].to_string();
+            current_section = line[1..line.len() - 1].to_string();
             // In config file, sections are like [profile name], remove "profile " prefix
             if is_config && current_section.starts_with("profile ") {
                 current_section = current_section[8..].to_string();
@@ -382,10 +432,11 @@ fn parse_ini_file(content: &str, profiles: &mut HashMap<String, HashMap<String, 
         // Key-value pair
         if let Some(eq_pos) = line.find('=') {
             let key = line[..eq_pos].trim().to_string();
-            let value = line[eq_pos+1..].trim().to_string();
+            let value = line[eq_pos + 1..].trim().to_string();
 
             if !current_section.is_empty() {
-                profiles.entry(current_section.clone())
+                profiles
+                    .entry(current_section.clone())
                     .or_insert_with(HashMap::new)
                     .insert(key, value);
             }
@@ -396,7 +447,9 @@ fn parse_ini_file(content: &str, profiles: &mut HashMap<String, HashMap<String, 
 }
 
 /// Load SSO session data from AWS config
-async fn load_sso_session_data(params: &SsoCredentialsParams) -> Result<HashMap<String, SsoSessionData>> {
+async fn load_sso_session_data(
+    params: &SsoCredentialsParams,
+) -> Result<HashMap<String, SsoSessionData>> {
     use std::env;
 
     let mut sessions = HashMap::new();
@@ -407,7 +460,8 @@ async fn load_sso_session_data(params: &SsoCredentialsParams) -> Result<HashMap<
 
     // Parse config file if it exists
     if config_file.exists() {
-        let content = fs::read_to_string(&config_file).await
+        let content = fs::read_to_string(&config_file)
+            .await
             .context("Failed to read AWS config file for SSO sessions")?;
 
         let mut current_section = String::new();
@@ -431,7 +485,7 @@ async fn load_sso_session_data(params: &SsoCredentialsParams) -> Result<HashMap<
                     }
                 }
 
-                current_section = line[1..line.len()-1].to_string();
+                current_section = line[1..line.len() - 1].to_string();
 
                 // Check if this is an sso-session section
                 if current_section.starts_with("sso-session ") {
@@ -451,18 +505,15 @@ async fn load_sso_session_data(params: &SsoCredentialsParams) -> Result<HashMap<
             if !session_name.is_empty() {
                 if let Some(eq_pos) = line.find('=') {
                     let key = line[..eq_pos].trim();
-                    let value = line[eq_pos+1..].trim().to_string();
+                    let value = line[eq_pos + 1..].trim().to_string();
 
                     if let Some(ref mut session) = current_session {
                         match key {
                             "sso_start_url" => session.sso_start_url = value,
                             "sso_region" => session.sso_region = value,
                             "sso_registration_scopes" => {
-                                session.sso_registration_scopes = Some(
-                                    value.split(',')
-                                        .map(|s| s.trim().to_string())
-                                        .collect()
-                                );
+                                session.sso_registration_scopes =
+                                    Some(value.split(',').map(|s| s.trim().to_string()).collect());
                             }
                             _ => {}
                         }
@@ -483,9 +534,13 @@ async fn load_sso_session_data(params: &SsoCredentialsParams) -> Result<HashMap<
     if let Some(ref session_name) = params.sso_session {
         if let Some(ref client_config) = params.client_config {
             let mut session = SsoSessionData {
-                sso_start_url: client_config.get("sso_start_url").cloned().unwrap_or_default(),
+                sso_start_url: client_config
+                    .get("sso_start_url")
+                    .cloned()
+                    .unwrap_or_default(),
                 sso_region: client_config.get("sso_region").cloned().unwrap_or_default(),
-                sso_registration_scopes: client_config.get("sso_registration_scopes")
+                sso_registration_scopes: client_config
+                    .get("sso_registration_scopes")
                     .map(|s| s.split(',').map(|s| s.trim().to_string()).collect()),
             };
 
@@ -500,23 +555,34 @@ async fn load_sso_session_data(params: &SsoCredentialsParams) -> Result<HashMap<
 }
 
 /// Get profile name (matches JavaScript getProfileName)
-fn get_profile_name(profile: Option<&str>, client_config: Option<&HashMap<String, String>>) -> String {
+fn get_profile_name(
+    profile: Option<&str>,
+    client_config: Option<&HashMap<String, String>>,
+) -> String {
     profile
-        .or_else(|| client_config.and_then(|c| c.get("profile")).map(|s| s.as_str()))
+        .or_else(|| {
+            client_config
+                .and_then(|c| c.get("profile"))
+                .map(|s| s.as_str())
+        })
         .unwrap_or("default")
         .to_string()
 }
 
 /// Resolve SSO credentials (matches JavaScript resolveSSOCredentials)
 async fn resolve_sso_credentials(params: &ResolveSsoCredentialsParams) -> Result<Credentials> {
-    debug!("Resolving SSO credentials for account {} role {}", params.sso_account_id, params.sso_role_name);
+    debug!(
+        "Resolving SSO credentials for account {} role {}",
+        params.sso_account_id, params.sso_role_name
+    );
 
     // Get SSO access token from cache
     let access_token = get_sso_access_token(
         &params.sso_start_url,
         &params.sso_region,
         params.sso_session.as_deref(),
-    ).await?;
+    )
+    .await?;
 
     // Create SSO client if not provided
     let default_client = HttpSsoClient::new(params.sso_region.clone());
@@ -527,15 +593,17 @@ async fn resolve_sso_credentials(params: &ResolveSsoCredentialsParams) -> Result
     };
 
     // Get role credentials using SSO client
-    let role_creds = sso_client.get_role_credentials(&GetRoleCredentialsParams {
-        access_token,
-        account_id: params.sso_account_id.clone(),
-        role_name: params.sso_role_name.clone(),
-    }).await?;
+    let role_creds = sso_client
+        .get_role_credentials(&GetRoleCredentialsParams {
+            access_token,
+            account_id: params.sso_account_id.clone(),
+            role_name: params.sso_role_name.clone(),
+        })
+        .await?;
 
     // Convert expiration from Unix timestamp to DateTime
-    let expiration = DateTime::from_timestamp(role_creds.expiration, 0)
-        .map(|dt| dt.with_timezone(&Utc));
+    let expiration =
+        DateTime::from_timestamp(role_creds.expiration, 0).map(|dt| dt.with_timezone(&Utc));
 
     Ok(Credentials {
         access_key_id: role_creds.access_key_id,
@@ -562,22 +630,31 @@ struct ResolveSsoCredentialsParams {
 }
 
 /// Get SSO access token from cache (matches JavaScript logic)
-async fn get_sso_access_token(sso_start_url: &str, sso_region: &str, sso_session: Option<&str>) -> Result<String> {
-    let cache_key = format!("{:x}", md5::compute(format!("{}-{}", sso_start_url, sso_region).as_bytes()));
+async fn get_sso_access_token(
+    sso_start_url: &str,
+    sso_region: &str,
+    sso_session: Option<&str>,
+) -> Result<String> {
+    let cache_key = format!(
+        "{:x}",
+        md5::compute(format!("{}-{}", sso_start_url, sso_region).as_bytes())
+    );
     let cache_file_path = get_sso_cache_file_path(&cache_key)?;
 
     if !cache_file_path.exists() {
         return Err(CredentialsProviderError::new(format!(
             "SSO access token not found in cache. Please run 'aws sso login --profile {}' first.",
             sso_session.unwrap_or("default")
-        )).into());
+        ))
+        .into());
     }
 
-    let cache_content = fs::read_to_string(&cache_file_path).await
+    let cache_content = fs::read_to_string(&cache_file_path)
+        .await
         .context("Failed to read SSO cache file")?;
 
-    let cache_data: serde_json::Value = serde_json::from_str(&cache_content)
-        .context("Failed to parse SSO cache file")?;
+    let cache_data: serde_json::Value =
+        serde_json::from_str(&cache_content).context("Failed to parse SSO cache file")?;
 
     let access_token = cache_data
         .get("accessToken")
@@ -592,7 +669,8 @@ async fn get_sso_access_token(sso_start_url: &str, sso_region: &str, sso_session
                 return Err(CredentialsProviderError::new(format!(
                     "SSO access token has expired. Please run 'aws sso login --profile {}' again.",
                     sso_session.unwrap_or("default")
-                )).into());
+                ))
+                .into());
             }
         }
     }
@@ -612,7 +690,9 @@ fn get_sso_cache_file_path(cache_key: &str) -> Result<PathBuf> {
 }
 
 /// Synchronous version for constructors
-fn sync_validate_and_resolve_sso_config(params: SsoCredentialsParams) -> Result<ValidatedSsoConfig> {
+fn sync_validate_and_resolve_sso_config(
+    params: SsoCredentialsParams,
+) -> Result<ValidatedSsoConfig> {
     // Validate configuration (matches JavaScript validateSsoProfile)
     let config = ValidatedSsoConfig {
         sso_start_url: params.sso_start_url.unwrap_or_default(),
@@ -626,44 +706,54 @@ fn sync_validate_and_resolve_sso_config(params: SsoCredentialsParams) -> Result<
 }
 
 /// Validate and resolve SSO configuration from parameters (matches JavaScript fromSSO exactly)
-async fn validate_and_resolve_sso_config(mut params: SsoCredentialsParams, caller_client_config: Option<&HashMap<String, String>>) -> Result<ValidatedSsoConfig> {
+async fn validate_and_resolve_sso_config(
+    mut params: SsoCredentialsParams,
+    caller_client_config: Option<&HashMap<String, String>>,
+) -> Result<ValidatedSsoConfig> {
     if let Some(ref logger) = params.logger {
         logger.debug("@aws-sdk/credential-provider-sso - fromSSO");
     }
 
-    let profile_name = get_profile_name(
-        params.profile.as_deref(),
-        caller_client_config,
-    );
+    let profile_name = get_profile_name(params.profile.as_deref(), caller_client_config);
 
     // If no explicit parameters provided, try to load from profile (matches JavaScript logic)
-    if params.sso_start_url.is_none() && params.sso_account_id.is_none() &&
-       params.sso_region.is_none() && params.sso_role_name.is_none() &&
-       params.sso_session.is_none() {
-
+    if params.sso_start_url.is_none()
+        && params.sso_account_id.is_none()
+        && params.sso_region.is_none()
+        && params.sso_role_name.is_none()
+        && params.sso_session.is_none()
+    {
         let known_files = parse_known_files(&params).await?;
-        let profile_config = known_files.get(&profile_name)
-            .ok_or_else(|| CredentialsProviderError::new(format!("Profile {} was not found.", profile_name)))?;
+        let profile_config = known_files.get(&profile_name).ok_or_else(|| {
+            CredentialsProviderError::new(format!("Profile {} was not found.", profile_name))
+        })?;
 
         if !is_sso_profile(profile_config) {
             return Err(CredentialsProviderError::new(format!(
-                "Profile {} is not configured with SSO credentials.", profile_name
-            )).into());
+                "Profile {} is not configured with SSO credentials.",
+                profile_name
+            ))
+            .into());
         }
 
         // Handle SSO session conflicts (matches JavaScript logic)
         if let Some(sso_session_name) = profile_config.get("sso_session") {
             let sso_session_data = load_sso_session_data(&params).await?;
             let session_data = sso_session_data.get(sso_session_name);
-            let config_description = format!(" configurations in profile {} and sso-session {}", profile_name, sso_session_name);
+            let config_description = format!(
+                " configurations in profile {} and sso-session {}",
+                profile_name, sso_session_name
+            );
 
             if let Some(session) = session_data {
                 // Validate region consistency
                 if let Some(ref region) = params.sso_region {
                     if region != &session.sso_region {
                         return Err(CredentialsProviderError::new(format!(
-                            "Conflicting SSO region{}", config_description
-                        )).into());
+                            "Conflicting SSO region{}",
+                            config_description
+                        ))
+                        .into());
                     }
                 }
 
@@ -671,8 +761,10 @@ async fn validate_and_resolve_sso_config(mut params: SsoCredentialsParams, calle
                 if let Some(ref start_url) = params.sso_start_url {
                     if start_url != &session.sso_start_url {
                         return Err(CredentialsProviderError::new(format!(
-                            "Conflicting SSO start URL{}", config_description
-                        )).into());
+                            "Conflicting SSO start URL{}",
+                            config_description
+                        ))
+                        .into());
                     }
                 }
 
@@ -701,7 +793,14 @@ async fn validate_and_resolve_sso_config(mut params: SsoCredentialsParams, calle
 }
 
 /// Create SSO credentials provider function (matches JavaScript fromSSO exactly)
-pub fn from_sso(params: SsoCredentialsParams) -> impl for<'a> Fn(Option<&'a HashMap<String, String>>) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Credentials>> + Send + 'a>> + Send + Sync {
+pub fn from_sso(
+    params: SsoCredentialsParams,
+) -> impl for<'a> Fn(
+    Option<&'a HashMap<String, String>>,
+) -> std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<Credentials>> + Send + 'a>,
+> + Send
+       + Sync {
     move |caller_client_config| {
         let params = SsoCredentialsParams {
             sso_start_url: params.sso_start_url.clone(),
@@ -717,7 +816,8 @@ pub fn from_sso(params: SsoCredentialsParams) -> impl for<'a> Fn(Option<&'a Hash
         };
 
         Box::pin(async move {
-            let validated_config = validate_and_resolve_sso_config(params, caller_client_config).await?;
+            let validated_config =
+                validate_and_resolve_sso_config(params, caller_client_config).await?;
 
             resolve_sso_credentials(&ResolveSsoCredentialsParams {
                 sso_start_url: validated_config.sso_start_url,
@@ -727,7 +827,8 @@ pub fn from_sso(params: SsoCredentialsParams) -> impl for<'a> Fn(Option<&'a Hash
                 sso_role_name: validated_config.sso_role_name,
                 sso_client: None,
                 profile: get_profile_name(None, caller_client_config),
-            }).await
+            })
+            .await
         })
     }
 }
@@ -746,7 +847,10 @@ mod tests {
 
     #[async_trait]
     impl SsoClient for MockSsoClient {
-        async fn get_role_credentials(&self, _params: &GetRoleCredentialsParams) -> Result<SsoRoleCredentials> {
+        async fn get_role_credentials(
+            &self,
+            _params: &GetRoleCredentialsParams,
+        ) -> Result<SsoRoleCredentials> {
             if self.should_fail {
                 return Err(CredentialsProviderError::new("Mock SSO client failure").into());
             }
@@ -765,7 +869,10 @@ mod tests {
         let mut profile = HashMap::new();
         assert!(!is_sso_profile(&profile));
 
-        profile.insert("sso_start_url".to_string(), "https://example.awsapps.com/start".to_string());
+        profile.insert(
+            "sso_start_url".to_string(),
+            "https://example.awsapps.com/start".to_string(),
+        );
         assert!(is_sso_profile(&profile));
 
         profile.clear();
@@ -787,7 +894,10 @@ mod tests {
         assert!(result.is_ok());
 
         let sso_profile = result.unwrap();
-        assert_eq!(sso_profile.sso_start_url, "https://example.awsapps.com/start");
+        assert_eq!(
+            sso_profile.sso_start_url,
+            "https://example.awsapps.com/start"
+        );
         assert_eq!(sso_profile.sso_account_id, "123456789012");
         assert_eq!(sso_profile.sso_region, "us-east-1");
         assert_eq!(sso_profile.sso_role_name, "ReadOnlyRole");
@@ -798,14 +908,17 @@ mod tests {
         let profile = ValidatedSsoConfig {
             sso_start_url: "https://example.awsapps.com/start".to_string(),
             sso_account_id: "".to_string(), // Missing field
-            sso_region: "".to_string(), // Missing field
-            sso_role_name: "".to_string(), // Missing field
+            sso_region: "".to_string(),     // Missing field
+            sso_role_name: "".to_string(),  // Missing field
             sso_session: None,
         };
 
         let result = validate_sso_profile(&profile, "test-profile");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Incomplete configuration"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Incomplete configuration"));
     }
 
     #[test]

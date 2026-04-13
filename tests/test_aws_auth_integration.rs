@@ -3,9 +3,8 @@
 // Run with: AWS_ACCESS_KEY_ID=xxx AWS_SECRET_ACCESS_KEY=yyy cargo test test_aws_auth_integration -- --ignored
 
 use llminate::auth::aws::{
-    AwsCredentials, SignatureV4, CredentialProvider,
-    EnvCredentialProvider, DefaultCredentialProvider,
-    InstanceMetadataProvider, ContainerMetadataProvider
+    AwsCredentials, ContainerMetadataProvider, CredentialProvider, DefaultCredentialProvider,
+    EnvCredentialProvider, InstanceMetadataProvider, SignatureV4,
 };
 use reqwest::header::HeaderMap;
 use std::env;
@@ -16,8 +15,8 @@ async fn test_sigv4_with_real_aws_sts() {
     // This test will make a real request to AWS STS GetCallerIdentity
     // which is the standard way to verify AWS credentials are working
 
-    let access_key = env::var("AWS_ACCESS_KEY_ID")
-        .expect("AWS_ACCESS_KEY_ID must be set for integration tests");
+    let access_key =
+        env::var("AWS_ACCESS_KEY_ID").expect("AWS_ACCESS_KEY_ID must be set for integration tests");
     let secret_key = env::var("AWS_SECRET_ACCESS_KEY")
         .expect("AWS_SECRET_ACCESS_KEY must be set for integration tests");
     let session_token = env::var("AWS_SESSION_TOKEN").ok();
@@ -38,18 +37,18 @@ async fn test_sigv4_with_real_aws_sts() {
     // Prepare request to GetCallerIdentity
     let mut headers = HeaderMap::new();
     headers.insert("Host", "sts.amazonaws.com".parse().unwrap());
-    headers.insert("Content-Type", "application/x-www-form-urlencoded".parse().unwrap());
+    headers.insert(
+        "Content-Type",
+        "application/x-www-form-urlencoded".parse().unwrap(),
+    );
 
     let body = b"Action=GetCallerIdentity&Version=2011-06-15";
 
     // Sign the request
-    signer.sign(
-        "POST",
-        "/",
-        &mut headers,
-        body,
-        &credentials
-    ).await.expect("Signing should succeed");
+    signer
+        .sign("POST", "/", &mut headers, body, &credentials)
+        .await
+        .expect("Signing should succeed");
 
     // Make the actual request to AWS
     let client = reqwest::Client::new();
@@ -102,11 +101,15 @@ async fn test_default_credential_chain_with_real_aws() {
 
     let mut headers = HeaderMap::new();
     headers.insert("Host", "sts.amazonaws.com".parse().unwrap());
-    headers.insert("Content-Type", "application/x-www-form-urlencoded".parse().unwrap());
+    headers.insert(
+        "Content-Type",
+        "application/x-www-form-urlencoded".parse().unwrap(),
+    );
 
     let body = b"Action=GetCallerIdentity&Version=2011-06-15";
 
-    signer.sign("POST", "/", &mut headers, body, &credentials)
+    signer
+        .sign("POST", "/", &mut headers, body, &credentials)
         .await
         .expect("Signing should succeed");
 
@@ -119,7 +122,11 @@ async fn test_default_credential_chain_with_real_aws() {
         .await
         .expect("Request should succeed");
 
-    assert_eq!(response.status(), 200, "Credentials from chain should work with AWS");
+    assert_eq!(
+        response.status(),
+        200,
+        "Credentials from chain should work with AWS"
+    );
 }
 
 #[tokio::test]
@@ -146,7 +153,9 @@ async fn test_instance_metadata_provider_on_ec2() {
 
     // We're on EC2, test the provider
     let provider = InstanceMetadataProvider::new();
-    let credentials = provider.get_credentials().await
+    let credentials = provider
+        .get_credentials()
+        .await
         .expect("Should get credentials from instance metadata");
 
     // Verify credentials
@@ -164,13 +173,16 @@ async fn test_container_metadata_provider_on_ecs() {
     // This test only works when running in an ECS container
 
     if env::var("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI").is_err()
-        && env::var("AWS_CONTAINER_CREDENTIALS_FULL_URI").is_err() {
+        && env::var("AWS_CONTAINER_CREDENTIALS_FULL_URI").is_err()
+    {
         println!("Not running in ECS, skipping container metadata test");
         return;
     }
 
     let provider = ContainerMetadataProvider::new();
-    let credentials = provider.get_credentials().await
+    let credentials = provider
+        .get_credentials()
+        .await
         .expect("Should get credentials from container metadata");
 
     // Verify credentials
@@ -187,11 +199,15 @@ async fn verify_credentials_with_sts(credentials: &AwsCredentials) {
 
     let mut headers = HeaderMap::new();
     headers.insert("Host", "sts.amazonaws.com".parse().unwrap());
-    headers.insert("Content-Type", "application/x-www-form-urlencoded".parse().unwrap());
+    headers.insert(
+        "Content-Type",
+        "application/x-www-form-urlencoded".parse().unwrap(),
+    );
 
     let body = b"Action=GetCallerIdentity&Version=2011-06-15";
 
-    signer.sign("POST", "/", &mut headers, body, credentials)
+    signer
+        .sign("POST", "/", &mut headers, body, credentials)
         .await
         .expect("Signing should succeed");
 
@@ -218,25 +234,25 @@ async fn test_sigv4_signature_against_aws_test_suite() {
     // This test verifies our implementation produces the same signatures
     // Test vector from: https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html
 
-
     let signer = SignatureV4::new("us-east-1".to_string(), "s3".to_string());
 
     // Known test case from AWS documentation
     // From: https://docs.aws.amazon.com/general/latest/gr/sigv4-calculate-signature.html
     let test_secret = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY";
-    let test_date = "20150830";  // The AWS test uses this date
+    let test_date = "20150830"; // The AWS test uses this date
     let test_region = "us-east-1";
-    let test_service = "iam";  // The AWS test uses IAM service
+    let test_service = "iam"; // The AWS test uses IAM service
 
-    let signing_key = signer.get_signing_key(test_secret, test_date, test_region, test_service);
+    let signing_key = signer
+        .get_signing_key(test_secret, test_date, test_region, test_service)
+        .expect("get_signing_key should not fail with valid inputs");
 
     // The expected signing key (from AWS test suite)
     let expected_key_hex = "f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41";
     let actual_key_hex = hex::encode(&signing_key);
 
     assert_eq!(
-        actual_key_hex,
-        expected_key_hex,
+        actual_key_hex, expected_key_hex,
         "Signing key should match AWS test suite"
     );
 
@@ -244,15 +260,19 @@ async fn test_sigv4_signature_against_aws_test_suite() {
     let mut headers = HeaderMap::new();
     headers.insert("Host", "examplebucket.s3.amazonaws.com".parse().unwrap());
     headers.insert("Range", "bytes=0-9".parse().unwrap());
-    headers.insert("x-amz-content-sha256", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".parse().unwrap());
+    headers.insert(
+        "x-amz-content-sha256",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            .parse()
+            .unwrap(),
+    );
     headers.insert("x-amz-date", "20130524T000000Z".parse().unwrap());
 
     let canonical_headers = signer.get_canonical_headers(&headers);
     let expected_canonical_headers = "host:examplebucket.s3.amazonaws.com\nrange:bytes=0-9\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20130524T000000Z";
 
     assert_eq!(
-        canonical_headers,
-        expected_canonical_headers,
+        canonical_headers, expected_canonical_headers,
         "Canonical headers should match AWS test suite"
     );
 }
@@ -275,12 +295,16 @@ async fn test_aws_signature_error_handling() {
 
     let mut headers = HeaderMap::new();
     headers.insert("Host", "sts.amazonaws.com".parse().unwrap());
-    headers.insert("Content-Type", "application/x-www-form-urlencoded".parse().unwrap());
+    headers.insert(
+        "Content-Type",
+        "application/x-www-form-urlencoded".parse().unwrap(),
+    );
 
     let body = b"Action=GetCallerIdentity&Version=2011-06-15";
 
     // This should succeed (signing always works with any credentials)
-    signer.sign("POST", "/", &mut headers, body, &bad_credentials)
+    signer
+        .sign("POST", "/", &mut headers, body, &bad_credentials)
         .await
         .expect("Signing should succeed even with bad credentials");
 
@@ -295,12 +319,16 @@ async fn test_aws_signature_error_handling() {
         .expect("Request should be sent");
 
     // AWS should reject our bad credentials
-    assert_eq!(response.status(), 403, "AWS should reject invalid credentials");
+    assert_eq!(
+        response.status(),
+        403,
+        "AWS should reject invalid credentials"
+    );
 
     let error_response = response.text().await.unwrap();
     assert!(
-        error_response.contains("InvalidClientTokenId") ||
-        error_response.contains("SignatureDoesNotMatch"),
+        error_response.contains("InvalidClientTokenId")
+            || error_response.contains("SignatureDoesNotMatch"),
         "AWS should return a signature error"
     );
 }

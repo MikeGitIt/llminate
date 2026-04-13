@@ -1,7 +1,7 @@
 use crate::ai::tools::ToolHandler;
 use crate::error::{Error, Result};
-use tokio_util::sync::CancellationToken;
 use async_trait::async_trait;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -9,7 +9,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use once_cell::sync::Lazy;
+use tokio_util::sync::CancellationToken;
 
 /// Task status matching JavaScript enum
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -72,10 +72,10 @@ impl TaskStore {
     fn get_tasks_dir(team_name: &str) -> Result<PathBuf> {
         // Check for custom directory from environment
         if let Ok(custom_dir) = std::env::var("TASK_DIR") {
-            let tasks_dir = PathBuf::from(custom_dir);
+            // Always use team_name as subdirectory for proper isolation
+            let tasks_dir = PathBuf::from(custom_dir).join(team_name);
             if !tasks_dir.exists() {
-                fs::create_dir_all(&tasks_dir)
-                    .map_err(Error::Io)?;
+                fs::create_dir_all(&tasks_dir).map_err(Error::Io)?;
             }
             return Ok(tasks_dir);
         }
@@ -91,8 +91,7 @@ impl TaskStore {
             .join(team_name);
 
         if !tasks_dir.exists() {
-            fs::create_dir_all(&tasks_dir)
-                .map_err(Error::Io)?;
+            fs::create_dir_all(&tasks_dir).map_err(Error::Io)?;
         }
 
         Ok(tasks_dir)
@@ -127,8 +126,7 @@ impl TaskStore {
     /// Save counter to file
     fn save_counter(team_name: &str, counter: u32) -> Result<()> {
         let counter_file = Self::get_counter_file(team_name)?;
-        fs::write(&counter_file, counter.to_string())
-            .map_err(Error::Io)?;
+        fs::write(&counter_file, counter.to_string()).map_err(Error::Io)?;
         Ok(())
     }
 
@@ -162,10 +160,8 @@ impl TaskStore {
 
         // Save to file
         let task_file = Self::get_task_file(&self.team_name, &id)?;
-        let json_content = serde_json::to_string_pretty(&task)
-            .map_err(Error::Serialization)?;
-        fs::write(&task_file, json_content)
-            .map_err(Error::Io)?;
+        let json_content = serde_json::to_string_pretty(&task).map_err(Error::Serialization)?;
+        fs::write(&task_file, json_content).map_err(Error::Io)?;
 
         // Store in memory
         self.tasks.insert(id.clone(), task.clone());
@@ -186,10 +182,8 @@ impl TaskStore {
             return Ok(None);
         }
 
-        let json_content = fs::read_to_string(&task_file)
-            .map_err(Error::Io)?;
-        let task: Task = serde_json::from_str(&json_content)
-            .map_err(Error::Serialization)?;
+        let json_content = fs::read_to_string(&task_file).map_err(Error::Io)?;
+        let task: Task = serde_json::from_str(&json_content).map_err(Error::Serialization)?;
 
         Ok(Some(task))
     }
@@ -295,10 +289,8 @@ impl TaskStore {
     /// Save a task to file
     fn save_task(&self, task: &Task) -> Result<()> {
         let task_file = Self::get_task_file(&self.team_name, &task.id)?;
-        let json_content = serde_json::to_string_pretty(task)
-            .map_err(Error::Serialization)?;
-        fs::write(&task_file, json_content)
-            .map_err(Error::Io)?;
+        let json_content = serde_json::to_string_pretty(task).map_err(Error::Serialization)?;
+        fs::write(&task_file, json_content).map_err(Error::Io)?;
         Ok(())
     }
 
@@ -309,8 +301,7 @@ impl TaskStore {
 
         // Read all .json files in the tasks directory (except _counter.json)
         if tasks_dir.exists() {
-            let entries = fs::read_dir(&tasks_dir)
-                .map_err(Error::Io)?;
+            let entries = fs::read_dir(&tasks_dir).map_err(Error::Io)?;
 
             for entry in entries {
                 let entry = entry.map_err(Error::Io)?;
@@ -324,17 +315,17 @@ impl TaskStore {
                     }
                 }
 
-                let json_content = fs::read_to_string(&path)
-                    .map_err(Error::Io)?;
-                let task: Task = serde_json::from_str(&json_content)
-                    .map_err(Error::Serialization)?;
+                let json_content = fs::read_to_string(&path).map_err(Error::Io)?;
+                let task: Task =
+                    serde_json::from_str(&json_content).map_err(Error::Serialization)?;
                 tasks.push(task);
             }
         }
 
         // Sort by ID for consistent ordering
         tasks.sort_by(|a, b| {
-            a.id.parse::<u32>().unwrap_or(0)
+            a.id.parse::<u32>()
+                .unwrap_or(0)
                 .cmp(&b.id.parse::<u32>().unwrap_or(0))
         });
 
@@ -355,8 +346,7 @@ pub struct TaskUpdates {
 
 /// Get the team name from environment (matching JavaScript variable22734)
 fn get_team_name() -> String {
-    std::env::var("CLAUDE_CODE_TEAM_NAME")
-        .unwrap_or_else(|_| "default".to_string())
+    std::env::var("CLAUDE_CODE_TEAM_NAME").unwrap_or_else(|_| "default".to_string())
 }
 
 /// Global task store manager
@@ -364,12 +354,12 @@ static TASK_STORES: Lazy<Arc<Mutex<HashMap<String, TaskStore>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
 /// Get or create task store for a team
-async fn get_task_store(team_name: &str) -> Arc<Mutex<HashMap<String, TaskStore>>> {
+async fn get_task_store(_team_name: &str) -> Arc<Mutex<HashMap<String, TaskStore>>> {
     TASK_STORES.clone()
 }
 
 /// TaskCreate tool - Create a new task for tracking
-/// Matches JavaScript implementation at line 494338
+/// Matches JavaScript implementation at line 697074 (variable1247/variable1272)
 pub struct TaskCreateTool;
 
 #[async_trait]
@@ -407,7 +397,11 @@ impl ToolHandler for TaskCreateTool {
         format!("Task: {}", subject)
     }
 
-    async fn execute(&self, input: Value, _cancellation_token: Option<CancellationToken>) -> Result<String> {
+    async fn execute(
+        &self,
+        input: Value,
+        _cancellation_token: Option<CancellationToken>,
+    ) -> Result<String> {
         // Get required parameters matching JavaScript schema
         let subject = input["subject"]
             .as_str()
@@ -433,12 +427,15 @@ impl ToolHandler for TaskCreateTool {
 
         // Format response matching JavaScript mapToolResultToToolResultBlockParam
         // "Task #${variable29010.id} created successfully: ${variable29010.subject}"
-        Ok(format!("Task #{} created successfully: {}", task.id, task.subject))
+        Ok(format!(
+            "Task #{} created successfully: {}",
+            task.id, task.subject
+        ))
     }
 }
 
 /// TaskGet tool - Get task details by ID
-/// Matches JavaScript implementation at line 494472
+/// Matches JavaScript implementation at line 697214 (variable21754/variable22275)
 pub struct TaskGetTool;
 
 #[async_trait]
@@ -472,7 +469,11 @@ impl ToolHandler for TaskGetTool {
         format!("Task ID: {}", task_id)
     }
 
-    async fn execute(&self, input: Value, _cancellation_token: Option<CancellationToken>) -> Result<String> {
+    async fn execute(
+        &self,
+        input: Value,
+        _cancellation_token: Option<CancellationToken>,
+    ) -> Result<String> {
         // Get required parameter matching JavaScript schema
         let task_id = input["taskId"]
             .as_str()
@@ -512,7 +513,8 @@ impl ToolHandler for TaskGetTool {
 
                 // Add blocked_by if present
                 if !task.blocked_by.is_empty() {
-                    let blocked_by_str = task.blocked_by
+                    let blocked_by_str = task
+                        .blocked_by
                         .iter()
                         .map(|id| format!("#{}", id))
                         .collect::<Vec<_>>()
@@ -522,7 +524,8 @@ impl ToolHandler for TaskGetTool {
 
                 // Add blocks if present
                 if !task.blocks.is_empty() {
-                    let blocks_str = task.blocks
+                    let blocks_str = task
+                        .blocks
                         .iter()
                         .map(|id| format!("#{}", id))
                         .collect::<Vec<_>>()
@@ -532,7 +535,8 @@ impl ToolHandler for TaskGetTool {
 
                 // Add references if present
                 if !task.references.is_empty() {
-                    let refs_str = task.references
+                    let refs_str = task
+                        .references
                         .iter()
                         .map(|id| format!("#{}", id))
                         .collect::<Vec<_>>()
@@ -632,7 +636,11 @@ impl ToolHandler for TaskUpdateTool {
         format!("Task ID: {}", task_id)
     }
 
-    async fn execute(&self, input: Value, _cancellation_token: Option<CancellationToken>) -> Result<String> {
+    async fn execute(
+        &self,
+        input: Value,
+        _cancellation_token: Option<CancellationToken>,
+    ) -> Result<String> {
         // Get required parameter
         let task_id = input["taskId"]
             .as_str()
@@ -691,14 +699,42 @@ impl ToolHandler for TaskUpdateTool {
             .entry(team_name.clone())
             .or_insert_with(|| TaskStore::new(&team_name));
 
+        // Check if task exists first (matching JavaScript line 697637-697645)
+        let existing_task = store.get_task(task_id)?;
+        if existing_task.is_none() {
+            return Err(Error::NotFound(format!("Task #{} not found", task_id)));
+        }
+
+        // Ownership check matching JavaScript line 697646-697661
+        // Non-team-lead agents in a team can only update their own tasks
+        let current_agent_id = std::env::var("CLAUDE_CODE_AGENT_ID").ok();
+        if let Some(ref agent_id) = current_agent_id {
+            if let Some(ref task) = existing_task {
+                if task.owner.as_deref() != Some(agent_id) {
+                    let is_team_lead = std::env::var("CLAUDE_CODE_AGENT_TYPE")
+                        .map(|t| t == "team-lead")
+                        .unwrap_or(false);
+                    let has_team_name = std::env::var("CLAUDE_CODE_TEAM_NAME").is_ok();
+
+                    // If not team-lead AND in a team context, reject the update
+                    if !is_team_lead && has_team_name {
+                        return Err(Error::PermissionDenied(format!(
+                            "Task #{} is not owned by you. Use TeammateTool assignTask or claimTask to claim this task first.",
+                            task_id
+                        )));
+                    }
+                }
+            }
+        }
+
         // Update the task
         match store.update_task(task_id, updates)? {
             None => {
-                // Task not found - matching JavaScript behavior (line 494757-494763)
+                // Task not found - should not happen since we checked above
                 Err(Error::NotFound(format!("Task #{} not found", task_id)))
             }
             Some(updated_fields) => {
-                // Format response matching JavaScript (line 494810-494817)
+                // Format response matching JavaScript (line 697722)
                 // `Updated task #${variable21016} ${variable26452.join(", ")}`
                 let fields_str = if updated_fields.is_empty() {
                     "no fields".to_string()
@@ -709,7 +745,7 @@ impl ToolHandler for TaskUpdateTool {
                 let mut result = format!("Updated task #{} {}", task_id, fields_str);
 
                 // If resolved and running as an agent, add prompt to find next task
-                // Matching JavaScript line 494811-494813
+                // Matching JavaScript line 697723-697726
                 if was_resolved {
                     if std::env::var("CLAUDE_CODE_AGENT_ID").is_ok() {
                         result.push_str("\n\nTask completed. Call TaskList now to find your next available task or see if your work unblocked others.");
@@ -749,7 +785,11 @@ impl ToolHandler for TaskListTool {
         "List task list".to_string()
     }
 
-    async fn execute(&self, _input: Value, _cancellation_token: Option<CancellationToken>) -> Result<String> {
+    async fn execute(
+        &self,
+        _input: Value,
+        _cancellation_token: Option<CancellationToken>,
+    ) -> Result<String> {
         // Get team name
         let team_name = get_team_name();
 
@@ -787,13 +827,15 @@ impl ToolHandler for TaskListTool {
                 };
 
                 // Add owner if present
-                let owner_str = task.owner
+                let owner_str = task
+                    .owner
                     .as_ref()
                     .map(|o| format!(" ({})", o))
                     .unwrap_or_default();
 
                 // Filter out resolved tasks from blockedBy (matching JavaScript line 494969)
-                let active_blockers: Vec<&String> = task.blocked_by
+                let active_blockers: Vec<&String> = task
+                    .blocked_by
                     .iter()
                     .filter(|id| !resolved_ids.contains(*id))
                     .collect();
@@ -802,7 +844,11 @@ impl ToolHandler for TaskListTool {
                 let blocked_str = if !active_blockers.is_empty() {
                     format!(
                         " [blocked by {}]",
-                        active_blockers.iter().map(|id| format!("#{}", id)).collect::<Vec<_>>().join(", ")
+                        active_blockers
+                            .iter()
+                            .map(|id| format!("#{}", id))
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     )
                 } else {
                     String::new()
@@ -810,11 +856,7 @@ impl ToolHandler for TaskListTool {
 
                 format!(
                     "#{} [{}] {}{}{}",
-                    task.id,
-                    status_str,
-                    task.subject,
-                    owner_str,
-                    blocked_str
+                    task.id, status_str, task.subject, owner_str, blocked_str
                 )
             })
             .collect();
@@ -826,24 +868,32 @@ impl ToolHandler for TaskListTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use tempfile::TempDir;
 
     // Counter for unique team names in tests
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-    /// Helper to set up test environment with unique team name
-    fn setup_test_env() -> TempDir {
+    // Mutex to serialize tests that depend on process-wide env vars
+    static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Helper to set up test environment with unique team name.
+    /// Returns (TempDir, MutexGuard) - the guard MUST be held for the duration of the test
+    /// to prevent env var races between parallel tests.
+    fn setup_test_env() -> (TempDir, std::sync::MutexGuard<'static, ()>) {
+        let guard = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let test_id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
-        std::env::set_var("TASK_DIR", temp_dir.path().to_str().unwrap());
-        std::env::set_var("CLAUDE_CODE_TEAM_NAME", format!("test-team-{}", test_id));
-        temp_dir
+        unsafe {
+            std::env::set_var("TASK_DIR", temp_dir.path().to_str().unwrap());
+            std::env::set_var("CLAUDE_CODE_TEAM_NAME", format!("test-team-{}", test_id));
+        }
+        (temp_dir, guard)
     }
 
     #[tokio::test]
     async fn test_task_create() {
-        let _temp_dir = setup_test_env();
+        let (_temp_dir, _guard) = setup_test_env();
 
         let tool = TaskCreateTool;
         let input = json!({
@@ -861,7 +911,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_create_missing_subject() {
-        let _temp_dir = setup_test_env();
+        let (_temp_dir, _guard) = setup_test_env();
 
         let tool = TaskCreateTool;
         let input = json!({
@@ -877,7 +927,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_get() {
-        let _temp_dir = setup_test_env();
+        let (_temp_dir, _guard) = setup_test_env();
 
         // First create a task
         let create_tool = TaskCreateTool;
@@ -907,7 +957,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_get_not_found() {
-        let _temp_dir = setup_test_env();
+        let (_temp_dir, _guard) = setup_test_env();
 
         let tool = TaskGetTool;
         let input = json!({
@@ -923,7 +973,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_get_missing_task_id() {
-        let _temp_dir = setup_test_env();
+        let (_temp_dir, _guard) = setup_test_env();
 
         let tool = TaskGetTool;
         let input = json!({});
@@ -937,7 +987,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_multiple_task_creation() {
-        let _temp_dir = setup_test_env();
+        let (_temp_dir, _guard) = setup_test_env();
 
         let tool = TaskCreateTool;
 
@@ -988,7 +1038,7 @@ mod tests {
         };
 
         let json_str = serde_json::to_string(&task).expect("Should serialize");
-        assert!(json_str.contains("\"blockedBy\""));  // Verify camelCase
+        assert!(json_str.contains("\"blockedBy\"")); // Verify camelCase
 
         let deserialized: Task = serde_json::from_str(&json_str).expect("Should deserialize");
         assert_eq!(deserialized.id, "1");
@@ -1001,7 +1051,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_update_status() {
-        let _temp_dir = setup_test_env();
+        let (_temp_dir, _guard) = setup_test_env();
 
         // First create a task
         let create_tool = TaskCreateTool;
@@ -1009,7 +1059,10 @@ mod tests {
             "subject": "Task to update",
             "description": "Task for update test"
         });
-        create_tool.execute(create_input, None).await.expect("Should create task");
+        create_tool
+            .execute(create_input, None)
+            .await
+            .expect("Should create task");
 
         // Update the status
         let update_tool = TaskUpdateTool;
@@ -1029,19 +1082,27 @@ mod tests {
         let get_tool = TaskGetTool;
         let get_result = get_tool.execute(json!({"taskId": "1"}), None).await;
         assert!(get_result.is_ok());
-        assert!(get_result.expect("Should get task").contains("Status: resolved"));
+        assert!(get_result
+            .expect("Should get task")
+            .contains("Status: resolved"));
     }
 
     #[tokio::test]
     async fn test_task_update_add_comment() {
-        let _temp_dir = setup_test_env();
+        let (_temp_dir, _guard) = setup_test_env();
 
         // Create a task
         let create_tool = TaskCreateTool;
-        create_tool.execute(json!({
-            "subject": "Task for comments",
-            "description": "Testing comments"
-        }), None).await.expect("Should create task");
+        create_tool
+            .execute(
+                json!({
+                    "subject": "Task for comments",
+                    "description": "Testing comments"
+                }),
+                None,
+            )
+            .await
+            .expect("Should create task");
 
         // Add a comment
         let update_tool = TaskUpdateTool;
@@ -1067,7 +1128,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_update_not_found() {
-        let _temp_dir = setup_test_env();
+        let (_temp_dir, _guard) = setup_test_env();
 
         let update_tool = TaskUpdateTool;
         let update_input = json!({
@@ -1082,45 +1143,72 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_update_dependencies() {
-        let _temp_dir = setup_test_env();
+        let (_temp_dir, _guard) = setup_test_env();
 
         // Create two tasks
         let create_tool = TaskCreateTool;
-        let result1 = create_tool.execute(json!({
-            "subject": "Task 1",
-            "description": "First task"
-        }), None).await.expect("Should create task 1");
+        let result1 = create_tool
+            .execute(
+                json!({
+                    "subject": "Task 1",
+                    "description": "First task"
+                }),
+                None,
+            )
+            .await
+            .expect("Should create task 1");
 
-        let task1_id = result1.split('#').nth(1)
+        let task1_id = result1
+            .split('#')
+            .nth(1)
             .and_then(|s| s.split(' ').next())
             .expect("Should have task ID");
 
-        let result2 = create_tool.execute(json!({
-            "subject": "Task 2",
-            "description": "Second task"
-        }), None).await.expect("Should create task 2");
+        let result2 = create_tool
+            .execute(
+                json!({
+                    "subject": "Task 2",
+                    "description": "Second task"
+                }),
+                None,
+            )
+            .await
+            .expect("Should create task 2");
 
-        let task2_id = result2.split('#').nth(1)
+        let task2_id = result2
+            .split('#')
+            .nth(1)
             .and_then(|s| s.split(' ').next())
             .expect("Should have task ID");
 
         // Make task 2 blocked by task 1
         let update_tool = TaskUpdateTool;
-        let result = update_tool.execute(json!({
-            "taskId": task2_id,
-            "addBlockedBy": [task1_id]
-        }), None).await;
+        let result = update_tool
+            .execute(
+                json!({
+                    "taskId": task2_id,
+                    "addBlockedBy": [task1_id]
+                }),
+                None,
+            )
+            .await;
 
         assert!(result.is_ok());
         assert!(result.expect("Should succeed").contains("blockedBy"));
 
         // Verify task 2 shows blocked by
         let get_tool = TaskGetTool;
-        let task2 = get_tool.execute(json!({"taskId": task2_id}), None).await.expect("Should get task 2");
+        let task2 = get_tool
+            .execute(json!({"taskId": task2_id}), None)
+            .await
+            .expect("Should get task 2");
         assert!(task2.contains("Blocked by:"));
 
         // Verify task 1 shows blocks
-        let task1 = get_tool.execute(json!({"taskId": task1_id}), None).await.expect("Should get task 1");
+        let task1 = get_tool
+            .execute(json!({"taskId": task1_id}), None)
+            .await
+            .expect("Should get task 1");
         assert!(task1.contains("Blocks:"));
     }
 
@@ -1130,7 +1218,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_list_empty() {
-        let _temp_dir = setup_test_env();
+        let (_temp_dir, _guard) = setup_test_env();
 
         let list_tool = TaskListTool;
         let result = list_tool.execute(json!({}), None).await;
@@ -1140,19 +1228,31 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_list_with_tasks() {
-        let _temp_dir = setup_test_env();
+        let (_temp_dir, _guard) = setup_test_env();
 
         // Create a couple of tasks
         let create_tool = TaskCreateTool;
-        create_tool.execute(json!({
-            "subject": "First task",
-            "description": "Description 1"
-        }), None).await.expect("Should create task 1");
+        create_tool
+            .execute(
+                json!({
+                    "subject": "First task",
+                    "description": "Description 1"
+                }),
+                None,
+            )
+            .await
+            .expect("Should create task 1");
 
-        create_tool.execute(json!({
-            "subject": "Second task",
-            "description": "Description 2"
-        }), None).await.expect("Should create task 2");
+        create_tool
+            .execute(
+                json!({
+                    "subject": "Second task",
+                    "description": "Description 2"
+                }),
+                None,
+            )
+            .await
+            .expect("Should create task 2");
 
         // List tasks
         let list_tool = TaskListTool;
@@ -1167,49 +1267,83 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_list_filters_resolved_blockers() {
-        let _temp_dir = setup_test_env();
+        let (_temp_dir, _guard) = setup_test_env();
 
         // Create two tasks where task 2 is blocked by task 1
         let create_tool = TaskCreateTool;
-        let result1 = create_tool.execute(json!({
-            "subject": "Blocking task",
-            "description": "This blocks task 2"
-        }), None).await.expect("Should create task 1");
+        let result1 = create_tool
+            .execute(
+                json!({
+                    "subject": "Blocking task",
+                    "description": "This blocks task 2"
+                }),
+                None,
+            )
+            .await
+            .expect("Should create task 1");
 
         // Extract task ID from "Task #N created successfully"
-        let task1_id = result1.split('#').nth(1)
+        let task1_id = result1
+            .split('#')
+            .nth(1)
             .and_then(|s| s.split(' ').next())
             .expect("Should have task ID");
 
-        let result2 = create_tool.execute(json!({
-            "subject": "Blocked task",
-            "description": "This is blocked by task 1"
-        }), None).await.expect("Should create task 2");
+        let result2 = create_tool
+            .execute(
+                json!({
+                    "subject": "Blocked task",
+                    "description": "This is blocked by task 1"
+                }),
+                None,
+            )
+            .await
+            .expect("Should create task 2");
 
-        let task2_id = result2.split('#').nth(1)
+        let task2_id = result2
+            .split('#')
+            .nth(1)
             .and_then(|s| s.split(' ').next())
             .expect("Should have task ID");
 
         // Add dependency
         let update_tool = TaskUpdateTool;
-        update_tool.execute(json!({
-            "taskId": task2_id,
-            "addBlockedBy": [task1_id]
-        }), None).await.expect("Should update dependency");
+        update_tool
+            .execute(
+                json!({
+                    "taskId": task2_id,
+                    "addBlockedBy": [task1_id]
+                }),
+                None,
+            )
+            .await
+            .expect("Should update dependency");
 
         // List should show task 2 as blocked
         let list_tool = TaskListTool;
-        let list_result1 = list_tool.execute(json!({}), None).await.expect("Should list");
+        let list_result1 = list_tool
+            .execute(json!({}), None)
+            .await
+            .expect("Should list");
         assert!(list_result1.contains("[blocked by"));
 
         // Resolve task 1
-        update_tool.execute(json!({
-            "taskId": task1_id,
-            "status": "resolved"
-        }), None).await.expect("Should resolve task 1");
+        update_tool
+            .execute(
+                json!({
+                    "taskId": task1_id,
+                    "status": "resolved"
+                }),
+                None,
+            )
+            .await
+            .expect("Should resolve task 1");
 
         // List should no longer show task 2 as blocked (since blocker is resolved)
-        let list_result2 = list_tool.execute(json!({}), None).await.expect("Should list");
+        let list_result2 = list_tool
+            .execute(json!({}), None)
+            .await
+            .expect("Should list");
         assert!(!list_result2.contains("[blocked by"));
     }
 }

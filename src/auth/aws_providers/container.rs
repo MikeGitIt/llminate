@@ -1,5 +1,5 @@
-use super::{Credentials, CredentialProvider, CredentialsProviderError, memoize, MemoizedProvider};
-use super::http::{FromHttp, from_http};
+use super::http::{from_http, FromHttp};
+use super::{memoize, CredentialProvider, Credentials, CredentialsProviderError, MemoizedProvider};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use reqwest::{Client, Url};
@@ -18,7 +18,8 @@ const DEFAULT_MAX_RETRIES: u32 = 3;
 
 // IMDSv2 endpoints
 const IMDS_TOKEN_ENDPOINT: &str = "http://169.254.169.254/latest/api/token";
-const IMDS_CREDENTIALS_ENDPOINT: &str = "http://169.254.169.254/latest/meta-data/iam/security-credentials/";
+const IMDS_CREDENTIALS_ENDPOINT: &str =
+    "http://169.254.169.254/latest/meta-data/iam/security-credentials/";
 
 /// Instance metadata credentials response
 #[derive(Debug, Deserialize, Serialize)]
@@ -125,8 +126,14 @@ impl CredentialProvider for FromContainerMetadata {
         // Validate that response is valid IMDS credentials
         if !self.is_imds_credentials(&credentials) {
             return Err(CredentialsProviderError::new(
-                "Invalid response from container metadata service."
-            ).with_logger(self.logger.clone().unwrap_or_else(|| "fromContainerMetadata".to_string())).into());
+                "Invalid response from container metadata service.",
+            )
+            .with_logger(
+                self.logger
+                    .clone()
+                    .unwrap_or_else(|| "fromContainerMetadata".to_string()),
+            )
+            .into());
         }
 
         // Set the credential feature for container metadata
@@ -203,7 +210,8 @@ impl FromInstanceMetadata {
 
         let mut attempt = 0;
         while attempt <= self.config.max_retries {
-            let response = self.client
+            let response = self
+                .client
                 .put(IMDS_TOKEN_ENDPOINT)
                 .header("X-aws-ec2-metadata-token-ttl-seconds", "21600") // 6 hours
                 .send()
@@ -211,7 +219,10 @@ impl FromInstanceMetadata {
 
             match response {
                 Ok(resp) if resp.status().is_success() => {
-                    let token = resp.text().await.context("Failed to read IMDSv2 token response")?;
+                    let token = resp
+                        .text()
+                        .await
+                        .context("Failed to read IMDSv2 token response")?;
                     debug!("Successfully obtained IMDSv2 session token");
                     return Ok(Some(token));
                 }
@@ -245,8 +256,9 @@ impl FromInstanceMetadata {
             request_builder = request_builder.header("X-aws-ec2-metadata-token", token);
         } else if self.config.ec2_metadata_v1_disabled {
             return Err(CredentialsProviderError::new(
-                "EC2 Instance Metadata Service v1 is disabled and v2 is not available"
-            ).into());
+                "EC2 Instance Metadata Service v1 is disabled and v2 is not available",
+            )
+            .into());
         }
 
         let response = request_builder
@@ -255,12 +267,17 @@ impl FromInstanceMetadata {
             .context("Failed to get available IAM roles")?;
 
         if !response.status().is_success() {
-            return Err(CredentialsProviderError::new(
-                format!("Failed to get IAM roles: HTTP {}", response.status())
-            ).into());
+            return Err(CredentialsProviderError::new(format!(
+                "Failed to get IAM roles: HTTP {}",
+                response.status()
+            ))
+            .into());
         }
 
-        let roles_text = response.text().await.context("Failed to read roles response")?;
+        let roles_text = response
+            .text()
+            .await
+            .context("Failed to read roles response")?;
         let roles: Vec<String> = roles_text
             .lines()
             .filter(|line| !line.trim().is_empty())
@@ -269,15 +286,20 @@ impl FromInstanceMetadata {
 
         if roles.is_empty() {
             return Err(CredentialsProviderError::new(
-                "No IAM roles available from instance metadata"
-            ).into());
+                "No IAM roles available from instance metadata",
+            )
+            .into());
         }
 
         Ok(roles)
     }
 
     /// Get credentials for a specific IAM role
-    async fn get_role_credentials(&self, role_name: &str, token: Option<&str>) -> Result<InstanceMetadataCredentials> {
+    async fn get_role_credentials(
+        &self,
+        role_name: &str,
+        token: Option<&str>,
+    ) -> Result<InstanceMetadataCredentials> {
         let credentials_url = format!("{}{}", IMDS_CREDENTIALS_ENDPOINT, role_name);
         let mut request_builder = self.client.get(&credentials_url);
 
@@ -291,9 +313,12 @@ impl FromInstanceMetadata {
             .context("Failed to get role credentials")?;
 
         if !response.status().is_success() {
-            return Err(CredentialsProviderError::new(
-                format!("Failed to get credentials for role {}: HTTP {}", role_name, response.status())
-            ).into());
+            return Err(CredentialsProviderError::new(format!(
+                "Failed to get credentials for role {}: HTTP {}",
+                role_name,
+                response.status()
+            ))
+            .into());
         }
 
         let credentials: InstanceMetadataCredentials = response
@@ -303,9 +328,11 @@ impl FromInstanceMetadata {
 
         // Validate that credentials are successful
         if credentials.code != "Success" {
-            return Err(CredentialsProviderError::new(
-                format!("Credentials request failed with code: {}", credentials.code)
-            ).into());
+            return Err(CredentialsProviderError::new(format!(
+                "Credentials request failed with code: {}",
+                credentials.code
+            ))
+            .into());
         }
 
         Ok(credentials)
@@ -331,10 +358,20 @@ impl CredentialProvider for FromInstanceMetadata {
         }
 
         // Check if EC2 metadata is disabled
-        if env::var(AWS_EC2_METADATA_DISABLED).map(|v| v == "true").unwrap_or(false) {
+        if env::var(AWS_EC2_METADATA_DISABLED)
+            .map(|v| v == "true")
+            .unwrap_or(false)
+        {
             return Err(CredentialsProviderError::new(
-                "EC2 Instance Metadata Service access disabled"
-            ).with_logger(self.config.logger.clone().unwrap_or_else(|| "fromInstanceMetadata".to_string())).into());
+                "EC2 Instance Metadata Service access disabled",
+            )
+            .with_logger(
+                self.config
+                    .logger
+                    .clone()
+                    .unwrap_or_else(|| "fromInstanceMetadata".to_string()),
+            )
+            .into());
         }
 
         // Get IMDSv2 session token
@@ -348,7 +385,9 @@ impl CredentialProvider for FromInstanceMetadata {
         debug!("Using IAM role: {}", role_name);
 
         // Get credentials for the role
-        let metadata_creds = self.get_role_credentials(role_name, token.as_deref()).await?;
+        let metadata_creds = self
+            .get_role_credentials(role_name, token.as_deref())
+            .await?;
 
         // Parse expiration
         let expiration = super::parse_credential_expiration(&metadata_creds.expiration);
@@ -419,8 +458,8 @@ pub fn from_instance_metadata_with_options(
 mod tests {
     use super::*;
     use std::env;
+    use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
-    use wiremock::matchers::{method, path, header};
 
     // Helper to set and clean up environment variables
     struct EnvVar {
@@ -474,8 +513,14 @@ mod tests {
 
         assert_eq!(credentials.access_key_id, "container_access_key");
         assert_eq!(credentials.secret_access_key, "container_secret_key");
-        assert_eq!(credentials.session_token, Some("container_session_token".to_string()));
-        assert_eq!(credentials.credential_provider, Some("CREDENTIALS_CONTAINER_METADATA".to_string()));
+        assert_eq!(
+            credentials.session_token,
+            Some("container_session_token".to_string())
+        );
+        assert_eq!(
+            credentials.credential_provider,
+            Some("CREDENTIALS_CONTAINER_METADATA".to_string())
+        );
     }
 
     #[tokio::test]

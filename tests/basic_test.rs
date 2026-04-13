@@ -13,7 +13,10 @@ mod basic_tests {
         let s1 = "hello";
         let s2 = " world";
         let combined = format!("{}{}", s1, s2);
-        assert_eq!(combined, "hello world", "String concatenation should work correctly");
+        assert_eq!(
+            combined, "hello world",
+            "String concatenation should work correctly"
+        );
     }
 
     #[test]

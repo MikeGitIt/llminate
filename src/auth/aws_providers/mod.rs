@@ -1,10 +1,10 @@
+pub mod cognito;
+pub mod container;
 pub mod env;
 pub mod http;
-pub mod container;
+pub mod sso;
 pub mod sts;
 pub mod web_identity;
-pub mod sso;
-pub mod cognito;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -50,7 +50,11 @@ impl Credentials {
     }
 
     /// Set credential feature for tracking (equivalent to JavaScript setCredentialFeature)
-    pub fn set_credential_feature(mut self, feature: impl Into<String>, value: impl Into<String>) -> Self {
+    pub fn set_credential_feature(
+        mut self,
+        feature: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Self {
         self.credential_provider = Some(feature.into());
         self.credential_provider_value = Some(value.into());
         self
@@ -173,10 +177,17 @@ where
 }
 
 // Re-export convenience functions for easy access
+pub use cognito::{
+    from_cognito_identity, from_cognito_identity_pool, CognitoIdentityParams,
+    CognitoIdentityPoolParams,
+};
+pub use sso::{
+    from_sso, is_sso_profile, validate_sso_profile, SsoCredentialsParams, SsoCredentialsProvider,
+};
 pub use sts::{from_temporary_credentials, AssumeRoleParams, TemporaryCredentialsProvider};
-pub use web_identity::{from_web_token, from_token_file, WebTokenCredentialsProvider, TokenFileCredentialsProvider};
-pub use sso::{from_sso, SsoCredentialsProvider, SsoCredentialsParams, is_sso_profile, validate_sso_profile};
-pub use cognito::{from_cognito_identity, from_cognito_identity_pool, CognitoIdentityParams, CognitoIdentityPoolParams};
+pub use web_identity::{
+    from_token_file, from_web_token, TokenFileCredentialsProvider, WebTokenCredentialsProvider,
+};
 
 /// Helper function to parse credential expiration from string
 pub fn parse_credential_expiration(expiration_str: &str) -> Option<DateTime<Utc>> {
@@ -229,7 +240,10 @@ mod tests {
         let creds = Credentials::new("access_key".to_string(), "secret_key".to_string())
             .set_credential_feature("CREDENTIALS_ENV_VARS", "p");
 
-        assert_eq!(creds.credential_provider, Some("CREDENTIALS_ENV_VARS".to_string()));
+        assert_eq!(
+            creds.credential_provider,
+            Some("CREDENTIALS_ENV_VARS".to_string())
+        );
         assert_eq!(creds.credential_provider_value, Some("p".to_string()));
     }
 

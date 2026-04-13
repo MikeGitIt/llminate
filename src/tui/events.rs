@@ -74,10 +74,7 @@ pub enum ToolEvent {
         duration_ms: u64,
     },
     /// Tool execution failed
-    Failed {
-        tool_name: String,
-        error: String,
-    },
+    Failed { tool_name: String, error: String },
     /// Tool requires permission
     PermissionRequired {
         tool_name: String,
@@ -96,10 +93,7 @@ pub enum NetworkEvent {
     /// Connection error
     ConnectionError(String, String),
     /// Rate limit hit
-    RateLimit {
-        service: String,
-        retry_after: u64,
-    },
+    RateLimit { service: String, retry_after: u64 },
 }
 
 impl EventHandler {
@@ -107,39 +101,39 @@ impl EventHandler {
     pub fn new() -> Self {
         let (tx, rx) = mpsc::unbounded_channel();
         let stop_signal = Arc::new(AtomicBool::new(false));
-        
+
         Self {
             tx,
             rx,
             stop_signal,
         }
     }
-    
+
     /// Get event sender
     pub fn sender(&self) -> mpsc::UnboundedSender<AppEvent> {
         self.tx.clone()
     }
-    
+
     /// Get event receiver
     pub fn receiver(&mut self) -> &mut mpsc::UnboundedReceiver<AppEvent> {
         &mut self.rx
     }
-    
+
     /// Start event loop
     pub fn start(&self) {
         let tx = self.tx.clone();
         let stop_signal = self.stop_signal.clone();
-        
+
         // Spawn keyboard/mouse event handler
         tokio::spawn(async move {
             let tx = tx.clone();
             let stop_signal = stop_signal.clone();
-            
+
             loop {
                 if stop_signal.load(Ordering::Relaxed) {
                     break;
                 }
-                
+
                 // Poll for events with timeout
                 if event::poll(Duration::from_millis(50)).unwrap_or(false) {
                     if let Ok(event) = event::read() {
@@ -159,31 +153,31 @@ impl EventHandler {
                 }
             }
         });
-        
+
         // Spawn tick handler
         let tx = self.tx.clone();
         let stop_signal = self.stop_signal.clone();
-        
+
         tokio::spawn(async move {
             let mut ticker = interval(Duration::from_millis(100));
-            
+
             loop {
                 if stop_signal.load(Ordering::Relaxed) {
                     break;
                 }
-                
+
                 ticker.tick().await;
                 let _ = tx.send(AppEvent::Tick);
             }
         });
     }
-    
+
     /// Stop event handler
     pub fn stop(&self) {
         self.stop_signal.store(true, Ordering::Relaxed);
         let _ = self.tx.send(AppEvent::Shutdown);
     }
-    
+
     /// Handle key event and return action
     pub fn handle_key_event(key: KeyEvent) -> KeyAction {
         match (key.code, key.modifiers) {
@@ -207,12 +201,12 @@ impl EventHandler {
             (KeyCode::Char('n'), KeyModifiers::CONTROL) => KeyAction::NextItem,
             (KeyCode::Char('p'), KeyModifiers::CONTROL) => KeyAction::PrevItem,
             (KeyCode::Char('?'), KeyModifiers::CONTROL) => KeyAction::Help,
-            
+
             // Alt combinations
             (KeyCode::Char('b'), KeyModifiers::ALT) => KeyAction::WordLeft,
             (KeyCode::Char('f'), KeyModifiers::ALT) => KeyAction::WordRight,
             (KeyCode::Char('d'), KeyModifiers::ALT) => KeyAction::DeleteWord,
-            
+
             // Navigation keys
             (KeyCode::Up, _) => KeyAction::Up,
             (KeyCode::Down, _) => KeyAction::Down,
@@ -222,7 +216,7 @@ impl EventHandler {
             (KeyCode::End, _) => KeyAction::End,
             (KeyCode::PageUp, _) => KeyAction::PageUp,
             (KeyCode::PageDown, _) => KeyAction::PageDown,
-            
+
             // Special keys
             (KeyCode::Enter, _) => KeyAction::Submit,
             (KeyCode::Tab, KeyModifiers::NONE) => KeyAction::Tab,
@@ -231,7 +225,7 @@ impl EventHandler {
             (KeyCode::Backspace, _) => KeyAction::Backspace,
             (KeyCode::Delete, _) => KeyAction::Delete,
             (KeyCode::Esc, _) => KeyAction::Escape,
-            
+
             // Function keys
             (KeyCode::F(1), _) => KeyAction::F1,
             (KeyCode::F(2), _) => KeyAction::F2,
@@ -245,11 +239,11 @@ impl EventHandler {
             (KeyCode::F(10), _) => KeyAction::F10,
             (KeyCode::F(11), _) => KeyAction::F11,
             (KeyCode::F(12), _) => KeyAction::F12,
-            
+
             // Regular characters
             (KeyCode::Char(c), KeyModifiers::NONE) => KeyAction::Char(c),
             (KeyCode::Char(c), KeyModifiers::SHIFT) => KeyAction::Char(c),
-            
+
             // Default
             _ => KeyAction::None,
         }
@@ -270,7 +264,7 @@ pub enum KeyAction {
     PageDown,
     WordLeft,
     WordRight,
-    
+
     // Editing
     Char(char),
     Backspace,
@@ -279,7 +273,7 @@ pub enum KeyAction {
     DeleteToEnd,
     DeleteToStart,
     SwapChars,
-    
+
     // Control
     Submit,
     Cancel,
@@ -287,17 +281,17 @@ pub enum KeyAction {
     Tab,
     BackTab,
     Escape,
-    
+
     // Selection
     SelectAll,
     Copy,
     Paste,
     Cut,
-    
+
     // History
     Undo,
     Redo,
-    
+
     // UI
     Help,
     ToggleDebug,
@@ -305,11 +299,11 @@ pub enum KeyAction {
     Refresh,
     Find,
     Save,
-    
+
     // List navigation
     NextItem,
     PrevItem,
-    
+
     // Function keys
     F1,
     F2,
@@ -323,7 +317,7 @@ pub enum KeyAction {
     F10,
     F11,
     F12,
-    
+
     // No action
     None,
 }
@@ -340,21 +334,19 @@ impl EventBroadcaster {
             subscribers: Vec::new(),
         }
     }
-    
+
     /// Subscribe to events
     pub fn subscribe(&mut self) -> mpsc::UnboundedReceiver<AppEvent> {
         let (tx, rx) = mpsc::unbounded_channel();
         self.subscribers.push(tx);
         rx
     }
-    
+
     /// Broadcast event to all subscribers
     pub fn broadcast(&mut self, event: AppEvent) {
-        self.subscribers.retain(|tx| {
-            tx.send(event.clone()).is_ok()
-        });
+        self.subscribers.retain(|tx| tx.send(event.clone()).is_ok());
     }
-    
+
     /// Number of active subscribers
     pub fn subscriber_count(&self) -> usize {
         self.subscribers.len()
@@ -377,7 +369,7 @@ impl EventFilter {
             tool_filter: None,
         }
     }
-    
+
     /// Set key event filter
     pub fn with_key_filter<F>(mut self, filter: F) -> Self
     where
@@ -386,7 +378,7 @@ impl EventFilter {
         self.key_filter = Some(Box::new(filter));
         self
     }
-    
+
     /// Set message event filter
     pub fn with_message_filter<F>(mut self, filter: F) -> Self
     where
@@ -395,7 +387,7 @@ impl EventFilter {
         self.message_filter = Some(Box::new(filter));
         self
     }
-    
+
     /// Set tool event filter
     pub fn with_tool_filter<F>(mut self, filter: F) -> Self
     where
@@ -404,19 +396,13 @@ impl EventFilter {
         self.tool_filter = Some(Box::new(filter));
         self
     }
-    
+
     /// Check if event passes filters
     pub fn should_handle(&self, event: &AppEvent) -> bool {
         match event {
-            AppEvent::Key(key) => {
-                self.key_filter.as_ref().map_or(true, |f| f(key))
-            }
-            AppEvent::Message(msg) => {
-                self.message_filter.as_ref().map_or(true, |f| f(msg))
-            }
-            AppEvent::ToolEvent(tool) => {
-                self.tool_filter.as_ref().map_or(true, |f| f(tool))
-            }
+            AppEvent::Key(key) => self.key_filter.as_ref().map_or(true, |f| f(key)),
+            AppEvent::Message(msg) => self.message_filter.as_ref().map_or(true, |f| f(msg)),
+            AppEvent::ToolEvent(tool) => self.tool_filter.as_ref().map_or(true, |f| f(tool)),
             _ => true,
         }
     }

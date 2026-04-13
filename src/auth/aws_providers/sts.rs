@@ -1,4 +1,4 @@
-use super::{Credentials, CredentialProvider, CredentialsProviderError};
+use super::{CredentialProvider, Credentials, CredentialsProviderError};
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -169,10 +169,7 @@ pub struct TemporaryCredentialsProvider {
 
 impl TemporaryCredentialsProvider {
     /// Create a new temporary credentials provider
-    pub fn new(
-        master_credentials: Arc<dyn CredentialProvider>,
-        params: AssumeRoleParams,
-    ) -> Self {
+    pub fn new(master_credentials: Arc<dyn CredentialProvider>, params: AssumeRoleParams) -> Self {
         Self {
             master_credentials,
             params,
@@ -211,7 +208,10 @@ impl TemporaryCredentialsProvider {
     }
 
     /// Extract account ID from assumed role user ARN (JavaScript lines 709-715)
-    fn get_account_id_from_assumed_role_user(&self, assumed_role_user: &AssumedRoleUser) -> Option<String> {
+    fn get_account_id_from_assumed_role_user(
+        &self,
+        assumed_role_user: &AssumedRoleUser,
+    ) -> Option<String> {
         if let Some(ref arn) = assumed_role_user.arn {
             let parts: Vec<&str> = arn.split(':').collect();
             if parts.len() > 4 && !parts[4].is_empty() {
@@ -237,8 +237,9 @@ impl CredentialProvider for TemporaryCredentialsProvider {
         // Check for recursion (JavaScript lines 52-57)
         if self.detect_recursion() {
             return Err(CredentialsProviderError::new(
-                "fromTemporaryCredentials recursion in callerClientConfig.credentials"
-            ).into());
+                "fromTemporaryCredentials recursion in callerClientConfig.credentials",
+            )
+            .into());
         }
 
         // Build the AssumeRole request
@@ -247,10 +248,12 @@ impl CredentialProvider for TemporaryCredentialsProvider {
         // Handle MFA if required (JavaScript lines 23-35)
         if let Some(ref serial_number) = request.serial_number {
             if let Some(ref mfa_provider) = self.mfa_code_provider {
-                let token_code = mfa_provider.get_mfa_code(serial_number).await
-                    .map_err(|_| CredentialsProviderError::new(
-                        "Failed to get MFA code from provider"
-                    ))?;
+                let token_code = mfa_provider
+                    .get_mfa_code(serial_number)
+                    .await
+                    .map_err(|_| {
+                        CredentialsProviderError::new("Failed to get MFA code from provider")
+                    })?;
                 request.token_code = Some(token_code);
             } else {
                 return Err(CredentialsProviderError::new(
@@ -268,38 +271,58 @@ impl CredentialProvider for TemporaryCredentialsProvider {
                 // In a real implementation, this would create a real STS client
                 // For now, we'll return an error indicating the client is required
                 return Err(CredentialsProviderError::new(
-                    "STS client is required but not provided"
-                ).into());
+                    "STS client is required but not provided",
+                )
+                .into());
             }
         };
 
         // Call STS AssumeRole (JavaScript lines 95-97)
-        let response = sts_client.assume_role(request).await
-            .map_err(|e| CredentialsProviderError::new(
-                format!("Failed to assume role: {}", e)
-            ))?;
+        let response = sts_client
+            .assume_role(request)
+            .await
+            .map_err(|e| CredentialsProviderError::new(format!("Failed to assume role: {}", e)))?;
 
         // Validate the response (JavaScript lines 98-108)
         let sts_credentials = response.credentials.ok_or_else(|| {
-            CredentialsProviderError::new(
-                format!("Invalid response from STS.assumeRole call with role {}", self.params.role_arn)
-            ).with_logger(self.logger.clone().unwrap_or_else(|| "fromTemporaryCredentials".to_string()))
+            CredentialsProviderError::new(format!(
+                "Invalid response from STS.assumeRole call with role {}",
+                self.params.role_arn
+            ))
+            .with_logger(
+                self.logger
+                    .clone()
+                    .unwrap_or_else(|| "fromTemporaryCredentials".to_string()),
+            )
         })?;
 
         let access_key_id = sts_credentials.access_key_id.ok_or_else(|| {
-            CredentialsProviderError::new(
-                format!("Invalid response from STS.assumeRole call with role {}", self.params.role_arn)
-            ).with_logger(self.logger.clone().unwrap_or_else(|| "fromTemporaryCredentials".to_string()))
+            CredentialsProviderError::new(format!(
+                "Invalid response from STS.assumeRole call with role {}",
+                self.params.role_arn
+            ))
+            .with_logger(
+                self.logger
+                    .clone()
+                    .unwrap_or_else(|| "fromTemporaryCredentials".to_string()),
+            )
         })?;
 
         let secret_access_key = sts_credentials.secret_access_key.ok_or_else(|| {
-            CredentialsProviderError::new(
-                format!("Invalid response from STS.assumeRole call with role {}", self.params.role_arn)
-            ).with_logger(self.logger.clone().unwrap_or_else(|| "fromTemporaryCredentials".to_string()))
+            CredentialsProviderError::new(format!(
+                "Invalid response from STS.assumeRole call with role {}",
+                self.params.role_arn
+            ))
+            .with_logger(
+                self.logger
+                    .clone()
+                    .unwrap_or_else(|| "fromTemporaryCredentials".to_string()),
+            )
         })?;
 
         // Extract account ID if available (JavaScript lines 613, 622-625)
-        let account_id = response.assumed_role_user
+        let account_id = response
+            .assumed_role_user
             .as_ref()
             .and_then(|user| self.get_account_id_from_assumed_role_user(user));
 
@@ -444,20 +467,26 @@ mod tests {
 
         let sts_client = Arc::new(
             MockStsClient::new()
-                .with_response("arn:aws:iam::123456789012:role/test-role", sts_response)
+                .with_response("arn:aws:iam::123456789012:role/test-role", sts_response),
         );
 
-        let provider = TemporaryCredentialsProvider::new(master_creds, params)
-            .with_sts_client(sts_client);
+        let provider =
+            TemporaryCredentialsProvider::new(master_creds, params).with_sts_client(sts_client);
 
         let credentials = provider.provide_credentials().await.unwrap();
 
         assert_eq!(credentials.access_key_id, "temp_access_key");
         assert_eq!(credentials.secret_access_key, "temp_secret_key");
-        assert_eq!(credentials.session_token, Some("temp_session_token".to_string()));
+        assert_eq!(
+            credentials.session_token,
+            Some("temp_session_token".to_string())
+        );
         assert_eq!(credentials.credential_scope, Some("us-east-1".to_string()));
         assert_eq!(credentials.account_id, Some("123456789012".to_string()));
-        assert_eq!(credentials.credential_provider, Some("CREDENTIALS_STS_ASSUME_ROLE".to_string()));
+        assert_eq!(
+            credentials.credential_provider,
+            Some("CREDENTIALS_STS_ASSUME_ROLE".to_string())
+        );
         assert_eq!(credentials.credential_provider_value, Some("K".to_string()));
     }
 
@@ -492,11 +521,11 @@ mod tests {
 
         let sts_client = Arc::new(
             MockStsClient::new()
-                .with_response("arn:aws:iam::123456789012:role/test-role", sts_response)
+                .with_response("arn:aws:iam::123456789012:role/test-role", sts_response),
         );
 
-        let provider = TemporaryCredentialsProvider::new(master_creds, params)
-            .with_sts_client(sts_client);
+        let provider =
+            TemporaryCredentialsProvider::new(master_creds, params).with_sts_client(sts_client);
 
         let result = provider.provide_credentials().await;
 
@@ -524,7 +553,7 @@ mod tests {
 
         let sts_client = Arc::new(
             MockStsClient::new()
-                .with_response("arn:aws:iam::123456789012:role/test-role", sts_response)
+                .with_response("arn:aws:iam::123456789012:role/test-role", sts_response),
         );
 
         let mfa_provider = Arc::new(MockMfaCodeProvider::new("123456"));
@@ -547,8 +576,8 @@ mod tests {
 
         let sts_client = Arc::new(MockStsClient::new());
 
-        let provider = TemporaryCredentialsProvider::new(master_creds, params)
-            .with_sts_client(sts_client);
+        let provider =
+            TemporaryCredentialsProvider::new(master_creds, params).with_sts_client(sts_client);
 
         let result = provider.provide_credentials().await;
 
@@ -564,8 +593,8 @@ mod tests {
 
         let sts_client = Arc::new(MockStsClient::new().with_error());
 
-        let provider = TemporaryCredentialsProvider::new(master_creds, params)
-            .with_sts_client(sts_client);
+        let provider =
+            TemporaryCredentialsProvider::new(master_creds, params).with_sts_client(sts_client);
 
         let result = provider.provide_credentials().await;
 
@@ -586,7 +615,10 @@ mod tests {
         assert_eq!(params.role_arn, "arn:aws:iam::123456789012:role/test-role");
         assert_eq!(params.role_session_name, "test-session");
         assert_eq!(params.duration_seconds, Some(3600));
-        assert_eq!(params.mfa_serial, Some("arn:aws:iam::123456789012:mfa/user".to_string()));
+        assert_eq!(
+            params.mfa_serial,
+            Some("arn:aws:iam::123456789012:mfa/user".to_string())
+        );
         assert_eq!(params.token_code, Some("123456".to_string()));
         assert_eq!(params.external_id, Some("external123".to_string()));
     }
