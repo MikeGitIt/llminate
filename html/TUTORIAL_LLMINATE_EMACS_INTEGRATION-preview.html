@@ -1,0 +1,896 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'>
+<title>Markdown Preview</title>
+<link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.4.0/github-markdown-light.min.css' id='light-theme'>
+<link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.4.0/github-markdown-dark.min.css' id='dark-theme' disabled>
+<link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css' id='light-code'>
+<link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css' id='dark-code' disabled>
+<script src='https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js'></script>
+<script src='https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js'></script>
+<script src='https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/toml.min.js'></script>
+<style>
+.markdown-body {
+  box-sizing: border-box;
+  min-width: 200px;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 45px;
+}
+
+@media (max-width: 767px) {
+  .markdown-body {
+    padding: 15px;
+  }
+}
+
+/* Dark mode toggle button */
+.theme-toggle {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  background: #24292f;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 14px;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  z-index: 1000;
+  transition: background-color 0.2s;
+}
+
+.theme-toggle:hover {
+  background: #32383f;
+}
+
+body[data-theme='dark'] .theme-toggle {
+  background: #f6f8fa;
+  color: #24292f;
+}
+
+body[data-theme='dark'] .theme-toggle:hover {
+  background: #d1d9e0;
+}
+</style>
+</head>
+<body class='markdown-body'>
+<button class='theme-toggle' onclick='toggleTheme()'>🌙 Dark</button><h1
+id="building-a-production-grade-ai-coding-assistant-inside-emacs">Building
+a Production-Grade AI Coding Assistant Inside Emacs</h1>
+<h2
+id="youtube-tutorial-transcript-llminate-emacs-deep-integration">YouTube
+Tutorial Transcript — llminate + Emacs Deep Integration</h2>
+<hr />
+<h3 id="intro-000">INTRO [0:00]</h3>
+<p>Hey everyone. Today I’m going to walk you through something I’ve been
+building — a complete AI coding assistant that runs natively inside
+Emacs. Not as a plugin that shells out to some web API. Not a thin
+wrapper around an external tool. This is a full Rust-based agentic
+engine called <strong>llminate</strong> that communicates
+bidirectionally with Emacs over a JSON-lines protocol.</p>
+<p>In this session, we tackled nine major areas: streaming performance,
+markdown rendering with three switchable backends, an activity monitor,
+chat log persistence in multiple formats, AI code completion with
+CAPF/corfu integration, a security whitelist for reverse Emacs command
+execution, and critical fixes to the Rust subprocess protocol. Let’s
+dive in.</p>
+<hr />
+<h3 id="part-1-the-architecture-130">PART 1: THE ARCHITECTURE
+[1:30]</h3>
+<p>Before we get into the changes, let me show you the architecture.
+llminate is a Rust binary — it’s a full port of a production agentic
+coding assistant. It runs as a long-lived subprocess with
+<code>--keep-alive</code>, speaking JSON-lines over stdin and
+stdout.</p>
+<p>On the Emacs side, we have eight elisp files that form the
+integration layer:</p>
+<ul>
+<li><strong>llminate-bridge.el</strong> — the process bridge. It spawns
+the subprocess, parses JSON-lines, dispatches events.</li>
+<li><strong>llminate-chat.el</strong> — the chat UI. Streaming display,
+markdown rendering, prompt history.</li>
+<li><strong>llminate-layout.el</strong> — the IDE layout. Treemacs, chat
+panel, activity log, prompt input.</li>
+<li><strong>llminate-session.el</strong> — session persistence. Save,
+resume, and now — multi-format chat export.</li>
+<li><strong>llminate-mode.el</strong> — the global minor mode with all
+the keybindings.</li>
+<li><strong>llminate-emacs-commands.el</strong> — the reverse channel.
+llminate can call Emacs functions.</li>
+<li><strong>llminate-completion.el</strong> — code completion
+integration.</li>
+<li><strong>llminate-session.el</strong> — handles session persistence
+and resume.</li>
+</ul>
+<p>The protocol events flow like this:</p>
+<pre><code>Emacs → llminate:  Message (user prompts), ToolApprovalResponse, EmacsEvalResult
+llminate → Emacs:  Start, Ready, Message, ToolUse, ToolResult, ToolApproval,
+                   EmacsEval, Error, End</code></pre>
+<p>Every token from the LLM comes through as a <code>Message</code>
+event with <code>role: "assistant"</code>. Every tool call is a
+<code>ToolUse</code> followed by a <code>ToolResult</code>. And llminate
+can even call Emacs functions via <code>EmacsEval</code> — so the AI can
+run magit commands, navigate buffers, trigger eglot.</p>
+<hr />
+<h3 id="part-2-fixing-the-rust-protocol-layer-400">PART 2: FIXING THE
+RUST PROTOCOL LAYER [4:00]</h3>
+<p>Let’s start with the Rust side, because these fixes are foundational.
+If the protocol isn’t clean, nothing else works.</p>
+<h4 id="fix-1-tracing-was-polluting-stdout">Fix 1: Tracing Was Polluting
+stdout</h4>
+<p>Here’s the problem. llminate uses Rust’s <code>tracing</code> crate
+for debug logging. In print mode — which is what the Emacs bridge uses —
+stdout is reserved exclusively for the JSON-lines protocol. But the
+tracing initialization had a fallback branch that wrote to
+<code>io::stdout()</code>.</p>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode rust"><code class="sourceCode rust"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co">// BEFORE — the bug in src/main.rs</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="op">}</span> <span class="cf">else</span> <span class="op">{</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">// This fallback fires in print mode because all</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>    <span class="co">// other branches fail — and it writes to STDOUT!</span></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>    registry</span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>with(<span class="pp">fmt::</span>layer()<span class="op">.</span>with_writer(<span class="pp">io::</span>stdout)<span class="op">.</span>compact())</span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>init()<span class="op">;</span></span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>So Emacs would receive JSON-lines mixed with tracing output like
+<code>DEBUG hyper::client ...</code>. The process filter would try to
+parse that as JSON and fail.</p>
+<p>The fix was two changes:</p>
+<p>In <code>src/cli.rs</code>, we auto-enable stderr logging when both
+<code>--print</code> and <code>--debug</code> are active:</p>
+<div class="sourceCode" id="cb3"><pre
+class="sourceCode rust"><code class="sourceCode rust"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>enable_stderr_logging<span class="op">:</span> <span class="cn">Some</span>(<span class="kw">self</span><span class="op">.</span>stderr_logs <span class="op">||</span> (<span class="kw">self</span><span class="op">.</span>print <span class="op">&amp;&amp;</span> <span class="kw">self</span><span class="op">.</span>debug))<span class="op">,</span></span></code></pre></div>
+<p>In <code>src/main.rs</code>, the fallback branch now checks for print
+mode:</p>
+<div class="sourceCode" id="cb4"><pre
+class="sourceCode rust"><code class="sourceCode rust"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="op">}</span> <span class="cf">else</span> <span class="cf">if</span> is_print_mode <span class="op">{</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>    <span class="co">// No tracing output — stdout reserved for JSON protocol</span></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>    registry<span class="op">.</span>init()<span class="op">;</span>  <span class="co">// no-op subscriber</span></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="op">}</span> <span class="cf">else</span> <span class="op">{</span></span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>    <span class="co">// Non-print mode: stdout is fine</span></span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>    registry</span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>with(<span class="pp">fmt::</span>layer()<span class="op">.</span>with_writer(<span class="pp">io::</span>stdout)<span class="op">.</span>compact())</span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>init()<span class="op">;</span></span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>Result: stdout is 100% clean JSON-lines. Stderr is empty by default,
+and <code>--debug</code> routes tracing to stderr.</p>
+<h4 id="fix-2-brokenpipe-crashes">Fix 2: BrokenPipe Crashes</h4>
+<p>When you stop the bridge from Emacs — <code>C-c C-c</code> or killing
+the buffer — the Rust process would get a BrokenPipe error and crash
+with a full stack trace.</p>
+<p>The fix was in <code>src/tui/print_mode.rs</code>. The
+<code>emit_event</code> function now returns
+<code>Result&lt;bool&gt;</code> instead of
+<code>Result&lt;()&gt;</code>:</p>
+<div class="sourceCode" id="cb5"><pre
+class="sourceCode rust"><code class="sourceCode rust"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="kw">async</span> <span class="kw">fn</span> emit_event<span class="op">&lt;</span>W<span class="op">:</span> AsyncWrite <span class="op">+</span> <span class="bu">Unpin</span><span class="op">&gt;</span>(</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>    writer<span class="op">:</span> <span class="op">&amp;</span><span class="kw">mut</span> BufWriter<span class="op">&lt;</span>W<span class="op">&gt;,</span></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>    event<span class="op">:</span> <span class="op">&amp;</span>StreamEvent<span class="op">,</span></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>) <span class="op">-&gt;</span> <span class="dt">Result</span><span class="op">&lt;</span><span class="dt">bool</span><span class="op">&gt;</span> <span class="op">{</span></span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>    <span class="cf">match</span> writer<span class="op">.</span>write_all(json<span class="op">.</span>as_bytes())<span class="op">.</span><span class="kw">await</span> <span class="op">{</span></span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>        <span class="cn">Err</span>(e) <span class="cf">if</span> e<span class="op">.</span>kind() <span class="op">==</span> <span class="pp">ErrorKind::</span>BrokenPipe <span class="op">=&gt;</span> <span class="cf">return</span> <span class="cn">Ok</span>(<span class="cn">false</span>)<span class="op">,</span></span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>        <span class="cn">Err</span>(e) <span class="op">=&gt;</span> <span class="cf">return</span> <span class="cn">Err</span>(e<span class="op">.</span>into())<span class="op">,</span></span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>        <span class="cn">Ok</span>(()) <span class="op">=&gt;</span> <span class="op">{}</span></span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a>    <span class="co">// ... same pattern for newline and flush</span></span>
+<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a>    <span class="cn">Ok</span>(<span class="cn">true</span>)</span>
+<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>Every caller — about 12 call sites in
+<code>process_keep_alive_turn</code> and <code>run_keep_alive</code> —
+checks the boolean and exits cleanly:</p>
+<div class="sourceCode" id="cb6"><pre
+class="sourceCode rust"><code class="sourceCode rust"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> <span class="op">!</span>emit_event(<span class="op">&amp;</span><span class="kw">mut</span> writer<span class="op">,</span> <span class="op">&amp;</span>event)<span class="op">.</span><span class="kw">await</span><span class="op">?</span> <span class="op">{</span></span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="cn">Ok</span>(<span class="cn">false</span>)<span class="op">;</span>  <span class="co">// host disconnected, exit gracefully</span></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>Now the process exits with code 0 and no error output.</p>
+<hr />
+<h3 id="part-3-streaming-performance-six-optimizations-800">PART 3:
+STREAMING PERFORMANCE — SIX OPTIMIZATIONS [8:00]</h3>
+<p>This was the big one. The user reported that streaming was “HELLA
+SLOW” — text appeared in the chat buffer much slower than tokens
+actually arrived. We applied six optimizations across two files.</p>
+<h4 id="optimization-1-drop-the-overlay">Optimization 1: Drop the
+Overlay</h4>
+<p>This was the biggest win. The old code used an Emacs overlay to
+display streaming text:</p>
+<pre class="elisp"><code>;; BEFORE — called on EVERY token
+(insert text)
+(move-overlay ov (overlay-start ov) (point))</code></pre>
+<p>The problem: <code>move-overlay</code> forces Emacs’s display engine
+to re-evaluate the entire overlay region. As the response grows —
+hundreds of characters, then thousands — each <code>move-overlay</code>
+forces a redisplay of ALL the overlaid text. That’s O(n) per token,
+O(n²) total.</p>
+<p>The fix: markers instead of overlays.</p>
+<pre class="elisp"><code>;; AFTER — marker with right-gravity advances automatically
+(setq llminate-chat--stream-insert-marker (copy-marker pos t))</code></pre>
+<p>Text is inserted at the marker position with face applied as a text
+property — not an overlay. No <code>move-overlay</code>, no
+per-insertion redisplay of the growing region.</p>
+<h4 id="optimization-2-batched-text-insertion">Optimization 2: Batched
+Text Insertion</h4>
+<p>Instead of inserting every token into the buffer individually, we
+accumulate them in a string and flush every 30 milliseconds:</p>
+<pre class="elisp"><code>(defun llminate-chat--stream-chunk (text)
+  (setq llminate-chat--stream-pending
+        (concat llminate-chat--stream-pending text))
+  (unless llminate-chat--stream-flush-timer
+    (setq llminate-chat--stream-flush-timer
+          (run-at-time 0.03 nil #&#39;llminate-chat--flush-stream))))</code></pre>
+<p>This drops buffer operations from potentially hundreds per second to
+about 33 per second. Each flush does one <code>insert</code> with one
+<code>add-text-properties</code> call.</p>
+<h4 id="optimization-3-native-json-parsing">Optimization 3: Native JSON
+Parsing</h4>
+<p>We switched from <code>json-read-from-string</code> — the pure-elisp
+JSON parser — to <code>json-parse-string</code> — the native C
+implementation built into Emacs 27+:</p>
+<pre class="elisp"><code>;; BEFORE
+(let* ((json-object-type &#39;plist)
+       (json-array-type &#39;list)
+       (json-key-type &#39;keyword)
+       (event (json-read-from-string line)))
+
+;; AFTER — 5-10x faster for small objects
+(let* ((event (json-parse-string line
+               :object-type &#39;plist
+               :array-type &#39;list
+               :null-object nil
+               :false-object nil)))</code></pre>
+<p>For the tiny JSON objects in our streaming protocol, this is 5 to 10
+times faster.</p>
+<h4 id="optimization-4-optimized-line-buffer">Optimization 4: Optimized
+Line Buffer</h4>
+<p>The old process filter used <code>split-string</code>,
+<code>butlast</code>, and <code>(car (last ...))</code> — three
+full-list operations on every filter call. The new version does a
+single-pass scan:</p>
+<pre class="elisp"><code>(while (setq nl (string-search &quot;\n&quot; buf start))
+  (when (&gt; nl start)
+    (llminate-bridge--handle-line (substring buf start nl)))
+  (setq start (1+ nl)))
+(setq llminate-bridge--line-buffer
+      (if (= start 0) buf (substring buf start)))</code></pre>
+<p>No list allocation. One <code>substring</code> for the remaining
+tail. If no newline was found, no allocation at all.</p>
+<h4 id="optimization-5-conditional-debug-buffer">Optimization 5:
+Conditional Debug Buffer</h4>
+<p>Every process filter call used to write raw output to the
+<code>*llminate-process*</code> debug buffer — a
+<code>with-current-buffer</code> context switch plus <code>insert</code>
+on every chunk. Now it’s gated behind a flag:</p>
+<pre class="elisp"><code>(defcustom llminate-bridge-debug-process-output nil
+  &quot;When non-nil, write raw subprocess output to the process buffer.&quot;)</code></pre>
+<p>Disabled by default. Zero overhead in production.</p>
+<h4 id="optimization-6-scroll-batching">Optimization 6: Scroll
+Batching</h4>
+<p>Already done in the previous session, but worth mentioning —
+auto-scrolling uses a 50ms timer instead of per-token
+<code>with-selected-window</code> + <code>recenter</code>.</p>
+<hr />
+<h3 id="part-4-markdown-rendering-three-backends-1400">PART 4: MARKDOWN
+RENDERING — THREE BACKENDS [14:00]</h3>
+<p>Raw markdown in a chat buffer looks terrible. Code blocks show as
+triple backticks. Bold text shows asterisks. Headers show hash marks. We
+implemented three rendering backends, switchable at runtime.</p>
+<h4 id="the-architecture">The Architecture</h4>
+<p>Rendering happens once at the end of each turn — zero per-token cost.
+The raw markdown is rendered in a temp buffer using the appropriate
+major mode, then the text with all its properties is copied back into
+the chat buffer.</p>
+<pre class="elisp"><code>(defcustom llminate-chat-render-backend &#39;markdown
+  &quot;Backend for rendering assistant markdown responses.&quot;
+  :type &#39;(choice
+          (const :tag &quot;Markdown (gfm-view-mode font-lock)&quot; markdown)
+          (const :tag &quot;HTML (shr + pandoc)&quot; shr)
+          (const :tag &quot;Org (pandoc + org-mode)&quot; org)))</code></pre>
+<h4 id="backend-1-markdown-gfm-view-mode">Backend 1: Markdown
+(gfm-view-mode)</h4>
+<p>This uses the <code>markdown-mode</code> package’s
+<code>gfm-view-mode</code> — GitHub Flavored Markdown with font-lock
+syntax highlighting and hidden markup:</p>
+<pre class="elisp"><code>(defun llminate-chat--render-via-markdown (beg end md-text)
+  (let ((rendered
+         (with-temp-buffer
+           (insert md-text)
+           (delay-mode-hooks (gfm-view-mode))
+           (setq-local markdown-fontify-code-blocks-natively t)
+           (setq-local markdown-hide-markup t)
+           (font-lock-ensure)
+           (llminate-chat--delete-invisible-text)
+           (buffer-string))))
+    (delete-region beg end)
+    (goto-char beg)
+    (insert rendered)
+    ...))</code></pre>
+<p>The key trick: <code>gfm-view-mode</code> marks delimiters like
+<code>**</code> and <code>#</code> as invisible. But our chat buffer
+doesn’t have the matching <code>buffer-invisibility-spec</code>. So
+<code>llminate-chat--delete-invisible-text</code> walks backwards
+through the buffer and actually deletes those invisible characters.
+Clean output.</p>
+<h4 id="backend-2-shr-pandoc-html">Backend 2: SHR (pandoc → HTML)</h4>
+<p>This pipes markdown through pandoc to get HTML, then uses Emacs’s
+built-in <code>shr</code> HTML renderer:</p>
+<pre class="elisp"><code>(call-process-region (point-min) (point-max)
+                     &quot;pandoc&quot; t t nil
+                     &quot;-f&quot; &quot;markdown&quot; &quot;-t&quot; &quot;html&quot; &quot;--standalone&quot;)
+(let ((dom (libxml-parse-html-region (point-min) (point-max))))
+  (shr-insert-document dom))</code></pre>
+<p>This gives the richest visual output — proper spacing, styled code
+blocks, clickable links.</p>
+<h4 id="backend-3-org-pandoc-org-mode">Backend 3: Org (pandoc →
+org-mode)</h4>
+<p>Same pattern but targeting org format:</p>
+<pre class="elisp"><code>(call-process-region ... &quot;pandoc&quot; ... &quot;-f&quot; &quot;markdown&quot; &quot;-t&quot; &quot;org&quot;)
+(delay-mode-hooks (org-mode))
+(font-lock-ensure)</code></pre>
+<p>You get org-mode’s rich fontification — outline navigation, code
+block highlighting, structured headings.</p>
+<h4 id="switching-backends-live">Switching Backends Live</h4>
+<p>Both user and assistant messages are rendered. The original markdown
+source is stored in a text property:</p>
+<pre class="elisp"><code>(put-text-property beg new-end &#39;llminate-md-source md-text)</code></pre>
+<p>So you can switch backends at any time and re-render the entire
+conversation:</p>
+<pre class="elisp"><code>M-x llminate-chat-set-render-backend RET shr RET</code></pre>
+<p>All existing responses re-render using the new backend. No data
+loss.</p>
+<hr />
+<h3 id="part-5-the-activity-buffer-1900">PART 5: THE ACTIVITY BUFFER
+[19:00]</h3>
+<p>The <code>*llminate Activity*</code> buffer is part of the IDE
+layout. It shows a timestamped log of everything happening behind the
+scenes — tool calls, results, errors, approvals, session events.</p>
+<p>The problem was: it was completely empty. The hook handlers that
+populate it were only registered when the layout was toggled on — and if
+you reloaded the elisp file, the hooks were lost.</p>
+<p>We added handlers for all event types:</p>
+<pre class="elisp"><code>;; Session lifecycle
+(defun llminate-layout--on-start ()
+  (llminate-layout-log-activity &quot;Session&quot; (format &quot;Started (model: %s)&quot; ...)))
+
+(defun llminate-layout--on-ready ()
+  (llminate-layout-log-activity &quot;Session&quot; &quot;Ready — awaiting input&quot;))
+
+;; User messages
+(defun llminate-layout--on-message (role content)
+  (when (string= role &quot;user&quot;)
+    (llminate-layout-log-activity &quot;User&quot; (or content &quot;(empty)&quot;))))
+
+;; Turn completion
+(defun llminate-layout--on-end (reason)
+  (llminate-layout-log-activity &quot;End&quot; (format &quot;Turn complete%s&quot; ...)))</code></pre>
+<p>Plus the existing tool handlers for ToolUse, ToolResult, EmacsEval,
+Error, and ToolApproval.</p>
+<p>And the critical fix — auto-re-register on reload:</p>
+<pre class="elisp"><code>(when llminate-layout--active-p
+  (llminate-layout--unregister-hooks)
+  (llminate-layout--register-hooks))</code></pre>
+<p>This runs at load time. If the layout is already active when you
+reload the file, the hooks are refreshed automatically.</p>
+<hr />
+<h3 id="part-6-chat-log-persistence-2200">PART 6: CHAT LOG PERSISTENCE
+[22:00]</h3>
+<p>This is where it all comes together. Every conversation is now
+automatically saved in three formats.</p>
+<h4 id="the-message-log">The Message Log</h4>
+<p>As messages flow through the chat UI, we accumulate a structured
+log:</p>
+<pre class="elisp"><code>(defvar llminate-chat--message-log nil
+  &quot;Ordered list of (:role :content :timestamp) plists.&quot;)</code></pre>
+<p>User messages are logged in <code>llminate-chat-send</code>.
+Assistant messages are logged in <code>end-assistant-turn</code> from
+the bridge’s accumulated text.</p>
+<h4 id="three-format-export">Three-Format Export</h4>
+<p>After each assistant turn, a hook fires that exports the entire
+conversation:</p>
+<pre class="elisp"><code>;; Builds a clean markdown document with YAML frontmatter
+(defun llminate-session--build-markdown ()
+  (with-temp-buffer
+    (insert &quot;---\nsession: ...\nmodel: ...\ndate: ...\n---\n\n&quot;)
+    (dolist (msg messages)
+      (insert (format &quot;## %s — %s\n\n%s\n\n---\n\n&quot; role timestamp content)))
+    (buffer-string)))</code></pre>
+<p>That markdown is saved as <code>{session_id}.md</code>, then piped
+through pandoc twice:</p>
+<pre><code>pandoc -f markdown -t html --standalone  →  {session_id}.html
+pandoc -f markdown -t org               →  {session_id}.org</code></pre>
+<p>All three files land in <code>.claude/conversations/</code> alongside
+the existing Rust-side JSON:</p>
+<pre><code>.claude/conversations/
+├── abc123.json   ← Rust engine (raw message data)
+├── abc123.md     ← Clean markdown transcript
+├── abc123.html   ← Standalone HTML (shareable)
+└── abc123.org    ← Org-mode (Emacs-native)</code></pre>
+<p>The HTML version is standalone — you can open it in a browser and
+share it. The org version opens natively in Emacs with full outline
+navigation. The markdown is clean and readable anywhere.</p>
+<h4 id="auto-save">Auto-Save</h4>
+<p>Export happens automatically:</p>
+<pre class="elisp"><code>;; After each turn
+(add-hook &#39;llminate-chat-turn-end-hook #&#39;llminate-session--auto-export-chatlog)
+
+;; On Emacs exit
+(add-hook &#39;kill-emacs-hook #&#39;llminate-session--auto-save)</code></pre>
+<p>You can also trigger it manually with
+<code>M-x llminate-session-export-chatlog</code>.</p>
+<hr />
+<h3 id="part-7-the-user-message-fix-2500">PART 7: THE USER MESSAGE FIX
+[25:00]</h3>
+<p>One thing that bugged the user — and rightfully so — was that
+markdown rendering only applied to assistant responses. If you pasted a
+code block in your prompt, it showed as raw triple-backtick text while
+the assistant’s code blocks were beautifully rendered.</p>
+<p>Simple fix — apply the same rendering to user messages in
+<code>llminate-chat-send</code>:</p>
+<pre class="elisp"><code>(let ((msg-beg (point)))
+  (insert prompt &quot;\n&quot;)
+  (llminate-chat--render-response msg-beg (point)))</code></pre>
+<p>Now both sides of the conversation look consistent.</p>
+<hr />
+<h3 id="part-8-ai-code-completion-2700">PART 8: AI CODE COMPLETION
+[27:00]</h3>
+<p>This is one of the most powerful features of the integration —
+AI-powered code completion that plugs directly into Emacs’s native
+<code>completion-at-point</code> framework and works with corfu.</p>
+<h4 id="how-it-works">How It Works</h4>
+<p>llminate-completion.el manages a separate completion server —
+<code>ruemacs_completion_server</code> — as a subprocess. This server
+runs on localhost, accepts HTTP POST requests with editor context, and
+streams back completions via Server-Sent Events (SSE).</p>
+<p>The flow looks like this:</p>
+<pre><code>You type code → 0.5s idle debounce → collect EditorContext
+  → HTTP POST localhost:3000/complete → SSE response
+  → parse completion text → inject into CAPF → corfu popup</code></pre>
+<h4 id="the-editorcontext">The EditorContext</h4>
+<p>When a completion is triggered, the system snapshots your entire
+editing state:</p>
+<pre class="elisp"><code>(defun llminate-completion--collect-context ()
+  &quot;Build an EditorContext plist from the current buffer state.&quot;
+  `((file_path . ,file-path)
+    (language_id . ,lang-id)        ; &quot;rust&quot;, &quot;python&quot;, &quot;elisp&quot;, etc.
+    (content . ,content)             ; full buffer text
+    (cursor_position . ((line . ,line) (character . ,character)))
+    ,@(when selection
+        `((selection_range . ,selection)))))</code></pre>
+<p>This includes the file path, language ID (mapped from 30+ major
+modes), buffer content, cursor position, and active selection range. The
+server gets complete context to generate relevant completions.</p>
+<h4 id="language-detection">Language Detection</h4>
+<p>The system maps Emacs major modes to standard language
+identifiers:</p>
+<pre class="elisp"><code>&#39;((rust-mode         . &quot;rust&quot;)
+  (rust-ts-mode      . &quot;rust&quot;)
+  (python-mode       . &quot;python&quot;)
+  (emacs-lisp-mode   . &quot;elisp&quot;)
+  (go-mode           . &quot;go&quot;)
+  (typescript-ts-mode . &quot;typescript&quot;)
+  ...)  ; 30+ modes including tree-sitter variants</code></pre>
+<p>If your mode isn’t in the list, it falls back to stripping
+<code>-mode</code> and <code>-ts</code> suffixes — so
+<code>zig-mode</code> becomes <code>"zig"</code> automatically.</p>
+<h4 id="debounced-requests">Debounced Requests</h4>
+<p>You don’t want to fire an AI completion request on every keystroke.
+The system uses an idle timer:</p>
+<pre class="elisp"><code>(defcustom llminate-completion-debounce-delay 0.5
+  &quot;Seconds of idle time before triggering an AI completion request.&quot;)</code></pre>
+<p>Only after 0.5 seconds of no typing does the request fire. And it
+only fires in <code>prog-mode</code> buffers with a file on disk — no
+completions in scratch buffers or minibuffers.</p>
+<h4 id="capf-integration">CAPF Integration</h4>
+<p>The completion function plugs into Emacs’s standard
+<code>completion-at-point-functions</code>:</p>
+<pre class="elisp"><code>(defun llminate-completion-capf ()
+  &quot;A completion-at-point function providing AI completions via corfu.&quot;
+  (when (and (not (minibufferp))
+             (derived-mode-p &#39;prog-mode)
+             (buffer-file-name))
+    ...
+    (list start end
+          (or llminate-completion--candidates
+              (lambda (_string _predicate action) ...))
+          :exclusive &#39;no
+          :annotation-function (lambda (_cand) &quot; [AI]&quot;))))</code></pre>
+<p>The <code>:exclusive 'no</code> means it doesn’t block other
+completion sources — eglot/LSP completions still work. AI completions
+show up alongside them, annotated with <code>[AI]</code> so you know
+which is which. And it’s added with priority 90 — after eglot — so LSP
+completions take precedence.</p>
+<h4 id="multi-provider-support">Multi-Provider Support</h4>
+<p>The server supports both OpenAI and Anthropic as backends:</p>
+<pre class="elisp"><code>(defcustom llminate-completion-provider &quot;openai&quot;
+  &quot;AI provider to use (\&quot;openai\&quot; or \&quot;anthropic\&quot;).&quot;)</code></pre>
+<p>You can tune temperature and max tokens:</p>
+<pre class="elisp"><code>(setq llminate-completion-temperature 0.2)   ; deterministic
+(setq llminate-completion-max-tokens 256)     ; keep completions focused</code></pre>
+<h4 id="server-management">Server Management</h4>
+<p>The completion server starts automatically when needed, but you can
+manage it manually:</p>
+<pre><code>M-x llminate-completion-start-server   ; start manually
+M-x llminate-completion-stop-server    ; stop
+M-x llminate-completion-enable         ; enable in all prog-mode buffers
+M-x llminate-completion-disable        ; disable everywhere</code></pre>
+<p>Or trigger completion on demand with <code>C-c q .</code> — which
+calls <code>completion-at-point</code>.</p>
+<hr />
+<h3 id="part-9-emacs-command-security-whitelist-3100">PART 9: EMACS
+COMMAND SECURITY WHITELIST [31:00]</h3>
+<p>Here’s something unique about this integration. llminate doesn’t just
+send text to Emacs — it can call Emacs functions directly via the
+<code>EmacsEval</code> protocol event. The AI can run magit commands,
+navigate to definitions, format buffers, check diagnostics.</p>
+<p>But you obviously can’t let an AI call arbitrary Emacs functions.
+That’s where <code>llminate-emacs-commands.el</code> comes in — a
+whitelist-based security layer.</p>
+<h4 id="three-security-levels">Three Security Levels</h4>
+<p>Every command has one of three security levels:</p>
+<table>
+<thead>
+<tr>
+<th>Level</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>allow</code></td>
+<td>Execute immediately, return result</td>
+</tr>
+<tr>
+<td><code>prompt</code></td>
+<td>Show approval dialog before executing</td>
+</tr>
+<tr>
+<td><code>deny</code></td>
+<td>Never execute, return error</td>
+</tr>
+</tbody>
+</table>
+<p>Commands not in the whitelist are implicitly denied.</p>
+<h4 id="the-registry">The Registry</h4>
+<p>The whitelist covers six categories of operations:</p>
+<pre class="elisp"><code>;; File / Buffer operations — mostly &#39;allow&#39;
+(&quot;find-file&quot; . allow)  (&quot;save-buffer&quot; . allow)  (&quot;buffer-string&quot; . allow)
+
+;; Magit (git) — destructive ops require &#39;prompt&#39;
+(&quot;magit-status&quot; . allow)  (&quot;magit-commit&quot; . prompt)  (&quot;magit-push&quot; . prompt)
+
+;; Eglot / LSP — renames require &#39;prompt&#39;
+(&quot;xref-find-definitions&quot; . allow)  (&quot;eglot-rename&quot; . prompt)
+
+;; Compilation
+(&quot;compile&quot; . prompt)  (&quot;recompile&quot; . allow)
+
+;; Project operations — all read-only, all &#39;allow&#39;
+(&quot;project-root&quot; . allow)  (&quot;project-files&quot; . allow)
+
+;; Read-only queries — always safe
+(&quot;point&quot; . allow)  (&quot;line-number-at-pos&quot; . allow)</code></pre>
+<p>The philosophy: read-only operations are <code>allow</code>. Anything
+that changes state or is visible externally is <code>prompt</code>.
+Anything dangerous stays out of the whitelist entirely.</p>
+<h4 id="the-approval-dialog">The Approval Dialog</h4>
+<p>When llminate tries to call a <code>prompt</code>-level command, you
+see:</p>
+<pre><code>[llminate] Execute `magit-commit&#39;? (y)es (n)o (a)lways:</code></pre>
+<p>Three choices: - <strong>y</strong> — approve this one time -
+<strong>n</strong> — deny this request - <strong>a</strong> — upgrade
+this command to <code>allow</code> permanently (for the session)</p>
+<h4 id="result-serialization">Result Serialization</h4>
+<p>Emacs values don’t map directly to JSON. The serializer handles the
+conversion:</p>
+<ul>
+<li>Buffers → their name (string)</li>
+<li>Markers → their position (number)</li>
+<li>Symbols → their name (string)</li>
+<li>Hash tables → JSON objects</li>
+<li>Alists → JSON objects</li>
+<li>Regular lists → JSON arrays</li>
+<li>nil → null, t → true</li>
+</ul>
+<p>So when llminate calls <code>(buffer-file-name)</code> and gets
+<code>#&lt;buffer init.el&gt;</code>, the response goes back as
+<code>"init.el"</code> — clean JSON that the Rust engine can
+process.</p>
+<h4 id="managing-the-whitelist">Managing the Whitelist</h4>
+<p>You can view and modify the whitelist at runtime:</p>
+<pre><code>C-c q w                               ; list all registered commands
+M-x llminate-emacs-commands-list       ; same thing</code></pre>
+<p>This opens a formatted buffer showing every command and its security
+level. You can also add commands programmatically:</p>
+<pre class="elisp"><code>(llminate-emacs-commands-add &quot;my-custom-function&quot; &#39;allow)
+(llminate-emacs-commands-remove &quot;dangerous-function&quot;)</code></pre>
+<h4 id="the-modeline-shows-it">The Modeline Shows It</h4>
+<p>When llminate calls an Emacs function, the modeline updates in
+real-time:</p>
+<pre><code>llm[emacs:magit-stat]   ; truncated to 12 chars for readability</code></pre>
+<p>So you always know what the AI is doing inside your editor.</p>
+<hr />
+<h3 id="part-10-recap-demo-3400">PART 10: RECAP &amp; DEMO [34:00]</h3>
+<p>Let me show you all of this working together.</p>
+<p><strong>Step 1</strong>: Start Emacs, toggle the IDE layout with
+<code>C-c q l</code>. You see treemacs on the left, your editor in the
+center, the chat log on the right, the activity buffer at the bottom
+left, and the prompt input at the bottom right.</p>
+<p><strong>Step 2</strong>: Type a prompt in the input buffer, hit
+<code>C-c C-c</code>. Watch the activity buffer — it logs “User: your
+prompt”. The assistant starts streaming. Text appears smoothly — no
+freezing, no lag — thanks to the batched insertion and marker-based
+streaming.</p>
+<p><strong>Step 3</strong>: When the response completes, markdown
+rendering kicks in. Code blocks get syntax highlighting. Bold text is
+actually bold with the delimiters hidden. Headers are sized and colored.
+Lists have proper bullet characters.</p>
+<p><strong>Step 4</strong>: Check the activity buffer — it shows “End:
+Turn complete” and “Session: Ready — awaiting input”.</p>
+<p><strong>Step 5</strong>: Switch rendering backends:
+<code>M-x llminate-chat-set-render-backend RET shr RET</code>. Every
+response in the conversation re-renders through pandoc and shr. Rich
+HTML rendering right in your Emacs buffer.</p>
+<p><strong>Step 6</strong>: Check <code>.claude/conversations/</code>.
+Your conversation is saved as <code>.md</code>, <code>.html</code>, and
+<code>.org</code>. Open the HTML in a browser — it’s a clean, shareable
+transcript. Open the <code>.org</code> in Emacs — full org-mode with
+outline folding.</p>
+<p><strong>Step 7</strong>: Open a Rust file and start typing. After
+half a second of idle time, the completion server kicks in — corfu shows
+an <code>[AI]</code>-annotated suggestion alongside your LSP
+completions. Press <code>C-c q .</code> to trigger it manually.</p>
+<p><strong>Step 8</strong>: Check the modeline. It shows
+<code>llm[idle]</code> when waiting, <code>llm[streaming]</code> during
+a response, <code>llm[tool:Bash]</code> when executing a tool, and
+<code>llm[emacs:magit-stat]</code> when calling Emacs functions. The
+command whitelist ensures the AI only calls functions you’ve approved —
+<code>C-c q w</code> shows the full registry.</p>
+<p><strong>Step 9</strong>: Try the command palette with
+<code>C-c q c</code>. It gives you a completing-read menu of every
+llminate command — start/stop server, switch render backend, list
+sessions, explain region, and more.</p>
+<p><strong>Step 10</strong>: Stop the bridge with <code>C-c C-c</code>.
+The Rust process exits cleanly — no crash, no stack trace, exit code
+0.</p>
+<hr />
+<h3 id="summary-3600">SUMMARY [36:00]</h3>
+<p>Here’s what we built in this session:</p>
+<table>
+<colgroup>
+<col style="width: 26%" />
+<col style="width: 39%" />
+<col style="width: 34%" />
+</colgroup>
+<thead>
+<tr>
+<th>Area</th>
+<th>Changes</th>
+<th>Impact</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Rust Protocol</strong></td>
+<td>Clean stdout, graceful BrokenPipe</td>
+<td>Reliable subprocess communication</td>
+</tr>
+<tr>
+<td><strong>Streaming</strong></td>
+<td>6 optimizations</td>
+<td>Smooth, lag-free token display</td>
+</tr>
+<tr>
+<td><strong>Markdown</strong></td>
+<td>3 switchable backends</td>
+<td>Professional-quality rendering</td>
+</tr>
+<tr>
+<td><strong>Activity</strong></td>
+<td>Full event logging</td>
+<td>Visibility into tool execution</td>
+</tr>
+<tr>
+<td><strong>Persistence</strong></td>
+<td>3-format auto-export</td>
+<td>Shareable, searchable chat history</td>
+</tr>
+<tr>
+<td><strong>Consistency</strong></td>
+<td>User message rendering</td>
+<td>Both sides look good</td>
+</tr>
+<tr>
+<td><strong>Completion</strong></td>
+<td>CAPF/corfu + completion server</td>
+<td>AI code completion in any prog-mode buffer</td>
+</tr>
+<tr>
+<td><strong>Security</strong></td>
+<td>Whitelist-based command execution</td>
+<td>Safe reverse channel (AI → Emacs)</td>
+</tr>
+</tbody>
+</table>
+<p>Eight elisp files form the integration layer, backed by Rust protocol
+fixes. The completion system adds a dedicated server for AI-powered code
+completion that works alongside eglot/LSP. The command whitelist ensures
+llminate can leverage Emacs’s full power — magit, eglot, project.el —
+without compromising security.</p>
+<p>This is what I love about Emacs — it’s not just a text editor. It’s a
+platform. And with a proper bidirectional protocol, you can build deeply
+integrated tools that feel native. The AI doesn’t just talk to you in a
+chat buffer — it can read your diagnostics, navigate your code, stage
+your commits, and complete your code, all with security controls you
+define.</p>
+<p>Thanks for watching. If you want to try this yourself, all the code
+is in the llminate repository. Drop a comment if you have questions.</p>
+<hr />
+<h3 id="keybinding-reference">KEYBINDING REFERENCE</h3>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Command</th>
+<th>What It Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>C-c q q</code></td>
+<td>Toggle chat panel</td>
+<td>Show/hide the chat side windows</td>
+</tr>
+<tr>
+<td><code>C-c q l</code></td>
+<td>Toggle IDE layout</td>
+<td>Full IDE layout with activity buffer</td>
+</tr>
+<tr>
+<td><code>C-c q s</code></td>
+<td>Send prompt</td>
+<td>Send from any buffer</td>
+</tr>
+<tr>
+<td><code>C-c q e</code></td>
+<td>Explain region</td>
+<td>Send selected code for explanation</td>
+</tr>
+<tr>
+<td><code>C-c q f</code></td>
+<td>Fix region</td>
+<td>Send selected code for fixing</td>
+</tr>
+<tr>
+<td><code>C-c q r</code></td>
+<td>Resume session</td>
+<td>Pick and resume a saved session</td>
+</tr>
+<tr>
+<td><code>C-c q d</code></td>
+<td>Send diagnostics</td>
+<td>Send flymake/eglot diagnostics</td>
+</tr>
+<tr>
+<td><code>C-c q .</code></td>
+<td>Completion at point</td>
+<td>Trigger AI code completion</td>
+</tr>
+<tr>
+<td><code>C-c q w</code></td>
+<td>Command whitelist</td>
+<td>List allowed Emacs commands</td>
+</tr>
+<tr>
+<td><code>C-c q m</code></td>
+<td>Render backend</td>
+<td>Switch markdown rendering backend</td>
+</tr>
+<tr>
+<td><code>C-c q c</code></td>
+<td>Command palette</td>
+<td>Completing-read of all commands</td>
+</tr>
+<tr>
+<td><code>C-c C-c</code></td>
+<td>Send (in prompt)</td>
+<td>Send the prompt buffer contents</td>
+</tr>
+<tr>
+<td><code>C-c C-c</code></td>
+<td>Stop (in chat)</td>
+<td>Stop the llminate subprocess</td>
+</tr>
+<tr>
+<td><code>M-p / M-n</code></td>
+<td>History nav</td>
+<td>Navigate prompt history</td>
+</tr>
+</tbody>
+</table>
+<h3 id="customization-reference">CUSTOMIZATION REFERENCE</h3>
+<pre class="elisp"><code>;; Markdown rendering backend
+(setq llminate-chat-render-backend &#39;markdown)  ; or &#39;shr or &#39;org
+
+;; Auto-export chat logs after each turn
+(setq llminate-session-chatlog-auto-save t)
+
+;; Debug subprocess output (off by default for performance)
+(setq llminate-bridge-debug-process-output nil)
+
+;; Pandoc path (if not in PATH)
+(setq llminate-session-pandoc-executable &quot;/opt/homebrew/bin/pandoc&quot;)
+
+;; AI completion — provider and tuning
+(setq llminate-completion-provider &quot;openai&quot;)       ; or &quot;anthropic&quot;
+(setq llminate-completion-temperature 0.2)         ; lower = more deterministic
+(setq llminate-completion-max-tokens 256)           ; max tokens per completion
+(setq llminate-completion-debounce-delay 0.5)       ; seconds of idle before request
+(setq llminate-completion-context-lines 50)         ; lines of surrounding context
+(setq llminate-completion-server-port 3000)         ; completion server port
+
+;; Enable/disable AI completion globally
+;; (llminate-completion-enable)   ; add to prog-mode-hook
+;; (llminate-completion-disable)  ; remove from all buffers
+
+;; Command whitelist — add custom commands
+;; (llminate-emacs-commands-add &quot;my-function&quot; &#39;allow)
+;; (llminate-emacs-commands-add &quot;risky-function&quot; &#39;prompt)</code></pre>
+
+<script>
+// Theme toggle functionality
+function toggleTheme() {
+  const body = document.body;
+  const button = document.querySelector('.theme-toggle');
+  const lightTheme = document.getElementById('light-theme');
+  const darkTheme = document.getElementById('dark-theme');
+  const lightCode = document.getElementById('light-code');
+  const darkCode = document.getElementById('dark-code');
+  
+  const isDark = body.getAttribute('data-theme') === 'dark';
+  
+  if (isDark) {
+    // Switch to light mode
+    body.removeAttribute('data-theme');
+    lightTheme.disabled = false;
+    darkTheme.disabled = true;
+    lightCode.disabled = false;
+    darkCode.disabled = true;
+    button.innerHTML = '🌙 Dark';
+    localStorage.setItem('theme', 'light');
+  } else {
+    // Switch to dark mode
+    body.setAttribute('data-theme', 'dark');
+    lightTheme.disabled = true;
+    darkTheme.disabled = false;
+    lightCode.disabled = true;
+    darkCode.disabled = false;
+    button.innerHTML = '☀️ Light';
+    localStorage.setItem('theme', 'dark');
+  }
+  
+  // Re-highlight code blocks with new theme
+  document.querySelectorAll('pre code').forEach((block) => {
+    hljs.highlightElement(block);
+  });
+}
+
+// Initialize theme from localStorage
+document.addEventListener('DOMContentLoaded', function() {
+  const savedTheme = localStorage.getItem('theme');
+  if (savedTheme === 'dark') {
+    toggleTheme();
+  }
+});
+
+// Initialize syntax highlighting
+hljs.highlightAll();
+
+// Auto-detect and highlight code blocks that pandoc might have missed
+document.querySelectorAll('pre code').forEach((block) => {
+  if (!block.classList.contains('hljs')) {
+    hljs.highlightElement(block);
+  }
+});
+</script>
+</body></html>

@@ -1,0 +1,2 @@
+{"timestamp":"2026-04-03T00:00:11.872035Z","level":"INFO","fields":{"message":"Logging initialized: JSON logs are written to ./logs/app.json"},"target":"ruemacs"}
+{"timestamp":"2026-04-03T00:05:03.243704Z","level":"INFO","fields":{"message":"Logging initialized: JSON logs are written to ./logs/app.json"},"target":"ruemacs"}

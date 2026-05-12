@@ -1,0 +1,5 @@
+{"timestamp":"2026-04-04T08:10:18.050910Z","level":"INFO","fields":{"message":"Logging initialized: JSON logs are written to ./logs/app.json"},"target":"ruemacs"}
+{"timestamp":"2026-04-04T08:17:41.630682Z","level":"INFO","fields":{"message":"Logging initialized: JSON logs are written to ./logs/app.json"},"target":"ruemacs"}
+{"timestamp":"2026-04-04T08:32:56.921479Z","level":"INFO","fields":{"message":"Logging initialized: JSON logs are written to ./logs/app.json"},"target":"ruemacs"}
+{"timestamp":"2026-04-04T08:45:55.247060Z","level":"INFO","fields":{"message":"Logging initialized: JSON logs are written to ./logs/app.json"},"target":"ruemacs"}
+{"timestamp":"2026-04-04T08:56:28.091758Z","level":"INFO","fields":{"message":"Logging initialized: JSON logs are written to ./logs/app.json"},"target":"ruemacs"}

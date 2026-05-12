@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'>
+<title>Markdown Preview</title>
+<link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.4.0/github-markdown-light.min.css' id='light-theme'>
+<link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.4.0/github-markdown-dark.min.css' id='dark-theme' disabled>
+<link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css' id='light-code'>
+<link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css' id='dark-code' disabled>
+<script src='https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js'></script>
+<script src='https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js'></script>
+<script src='https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/toml.min.js'></script>
+<style>
+.markdown-body {
+  box-sizing: border-box;
+  min-width: 200px;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 45px;
+}
+
+@media (max-width: 767px) {
+  .markdown-body {
+    padding: 15px;
+  }
+}
+
+/* Dark mode toggle button */
+.theme-toggle {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  background: #24292f;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 14px;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  z-index: 1000;
+  transition: background-color 0.2s;
+}
+
+.theme-toggle:hover {
+  background: #32383f;
+}
+
+body[data-theme='dark'] .theme-toggle {
+  background: #f6f8fa;
+  color: #24292f;
+}
+
+body[data-theme='dark'] .theme-toggle:hover {
+  background: #d1d9e0;
+}
+</style>
+</head>
+<body class='markdown-body'>
+<button class='theme-toggle' onclick='toggleTheme()'>🌙 Dark</button><h1 id="current-state-llminate-emacs-integration">Current State:
+llminate Emacs Integration</h1>
+<p><strong>Date</strong>: 2026-04-02 <strong>Status</strong>: Active
+development / live testing</p>
+<hr />
+<h2 id="overview">Overview</h2>
+<p>llminate is integrated into Emacs as a long-lived subprocess speaking
+a JSON-lines protocol over stdin/stdout. The integration consists of 8
+elisp packages, Rust-side keep-alive mode, and a bidirectional command
+channel (Emacs can call llminate, llminate can call Emacs
+functions).</p>
+<hr />
+<h2 id="architecture">Architecture</h2>
+<pre><code>Emacs (elisp)                          llminate (Rust)
+─────────────                          ───────────────
+llminate-mode.el                       src/cli.rs (--keep-alive flag)
+  ├─ llminate-bridge.el ──stdin/stdout── src/tui/print_mode.rs
+  │    ├─ process filter (JSON-lines)      ├─ run_keep_alive()
+  │    ├─ llminate-emacs-commands.el       ├─ emit_event() → stdout
+  │    └─ reverse channel (EmacsEval)      ├─ spawn_stdin_reader() ← stdin
+  ├─ llminate-chat.el                     └─ process_keep_alive_turn()
+  │    ├─ streaming overlay display
+  │    └─ response handler               src/ai/emacs_tool.rs
+  ├─ llminate-approval.el                  └─ EmacsCommandTool
+  ├─ llminate-completion.el
+  ├─ llminate-layout.el
+  └─ llminate-session.el</code></pre>
+<h3 id="json-lines-protocol-stdout">JSON-lines Protocol (stdout)</h3>
+<pre><code>→ {&quot;type&quot;:&quot;Start&quot;,&quot;session_id&quot;:&quot;...&quot;,&quot;model&quot;:&quot;...&quot;}
+← {&quot;type&quot;:&quot;Message&quot;,&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;...&quot;}    (stdin from Emacs)
+→ {&quot;type&quot;:&quot;Message&quot;,&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;...&quot;}     (echo)
+→ {&quot;type&quot;:&quot;Message&quot;,&quot;role&quot;:&quot;assistant&quot;,&quot;content&quot;:&quot;...&quot;}  (streaming tokens)
+→ {&quot;type&quot;:&quot;ToolUse&quot;,&quot;name&quot;:&quot;...&quot;,&quot;input&quot;:{...}}
+→ {&quot;type&quot;:&quot;ToolResult&quot;,&quot;output&quot;:{...}}
+→ {&quot;type&quot;:&quot;EmacsEval&quot;,&quot;command&quot;:&quot;...&quot;,&quot;args&quot;:[...],&quot;request_id&quot;:&quot;...&quot;}
+← {&quot;type&quot;:&quot;EmacsEvalResult&quot;,&quot;request_id&quot;:&quot;...&quot;,&quot;success&quot;:true,&quot;result&quot;:&quot;...&quot;}
+→ {&quot;type&quot;:&quot;End&quot;,&quot;reason&quot;:&quot;completed&quot;}
+→ {&quot;type&quot;:&quot;Ready&quot;}</code></pre>
+<hr />
+<h2 id="files">Files</h2>
+<h3 id="rust-modified">Rust (modified)</h3>
+<table>
+<colgroup>
+<col style="width: 40%" />
+<col style="width: 60%" />
+</colgroup>
+<thead>
+<tr>
+<th>File</th>
+<th>Changes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/cli.rs</code></td>
+<td><code>--keep-alive</code> flag (hidden), auto-enable stderr logging
+in print+debug mode</td>
+</tr>
+<tr>
+<td><code>src/tui/print_mode.rs</code></td>
+<td><code>run_keep_alive()</code>, <code>emit_event()</code> with
+BrokenPipe handling (Result<bool>), <code>spawn_stdin_reader()</code>,
+<code>process_keep_alive_turn()</code>, 5 new StreamEvent variants</td>
+</tr>
+<tr>
+<td><code>src/ai/emacs_tool.rs</code></td>
+<td><code>EmacsCommandTool</code> with <code>PendingEmacsRequests</code>
+global, 60s timeout</td>
+</tr>
+<tr>
+<td><code>src/ai/tools.rs</code></td>
+<td>Registered <code>EmacsCommand</code> tool</td>
+</tr>
+<tr>
+<td><code>src/ai/mod.rs</code></td>
+<td><code>pub mod emacs_tool</code></td>
+</tr>
+<tr>
+<td><code>src/main.rs</code></td>
+<td>Fixed tracing: all console layers use <code>io::stderr</code>,
+print-mode fallback uses no-op subscriber</td>
+</tr>
+</tbody>
+</table>
+<h3 id="elisp-created">Elisp (created)</h3>
+<table>
+<colgroup>
+<col style="width: 24%" />
+<col style="width: 24%" />
+<col style="width: 52%" />
+</colgroup>
+<thead>
+<tr>
+<th>File</th>
+<th>Size</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>~/.emacs.d/lisp/llminate-bridge.el</code></td>
+<td>~22KB</td>
+<td>Subprocess management, JSON-lines filter, event dispatch, editor
+context</td>
+</tr>
+<tr>
+<td><code>~/.emacs.d/lisp/llminate-emacs-commands.el</code></td>
+<td>~12KB</td>
+<td>47-command whitelist (allow/prompt/deny security levels)</td>
+</tr>
+<tr>
+<td><code>~/.emacs.d/lisp/llminate-chat.el</code></td>
+<td>~16KB</td>
+<td>Chat UI with streaming overlay, side-window display, history</td>
+</tr>
+<tr>
+<td><code>~/.emacs.d/lisp/llminate-approval.el</code></td>
+<td>~22KB</td>
+<td>Tool approval via transient.el, ediff for file edits</td>
+</tr>
+<tr>
+<td><code>~/.emacs.d/lisp/llminate-completion.el</code></td>
+<td>~15KB</td>
+<td>CAPF/corfu integration with ruemacs_completion_server</td>
+</tr>
+<tr>
+<td><code>~/.emacs.d/lisp/llminate-layout.el</code></td>
+<td>~8KB</td>
+<td>IDE layout (treemacs + chat + activity log)</td>
+</tr>
+<tr>
+<td><code>~/.emacs.d/lisp/llminate-session.el</code></td>
+<td>~10KB</td>
+<td>Session persistence to JSON, resume/list/delete</td>
+</tr>
+<tr>
+<td><code>~/.emacs.d/lisp/llminate-mode.el</code></td>
+<td>~11KB</td>
+<td>Global minor mode, C-c q keybindings, modeline indicator</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="bugs-found-and-fixed">Bugs Found and Fixed</h2>
+<h3 id="binary-not-in-path">1. Binary not in PATH</h3>
+<ul>
+<li><strong>Symptom</strong>:
+<code>Searching for program: No such file or directory, llminate</code></li>
+<li><strong>Fix</strong>: User sets
+<code>llminate-bridge-executable</code> to full path</li>
+</ul>
+<h3 id="stale-release-binary">2. Stale release binary</h3>
+<ul>
+<li><strong>Symptom</strong>:
+<code>unexpected argument '--keep-alive' found</code></li>
+<li><strong>Fix</strong>: <code>cargo build --release</code> after Rust
+changes</li>
+</ul>
+<h3 id="permission-mode-case-mismatch">3. Permission mode case
+mismatch</h3>
+<ul>
+<li><strong>Symptom</strong>:
+<code>invalid value 'Ask' for '--permission-mode'</code></li>
+<li><strong>Cause</strong>: clap <code>ValueEnum</code> generates
+lowercase; elisp default was <code>"Ask"</code></li>
+<li><strong>Fix</strong>: Changed defcustom default to
+<code>"ask"</code> in llminate-bridge.el</li>
+</ul>
+<h3 id="bridge-crash-loop-on-stop">4. Bridge crash loop on stop</h3>
+<ul>
+<li><p><strong>Symptom</strong>: Calling
+<code>llminate-bridge-stop</code> (or
+<code>M-x llminate-bridge-stop</code>) did not actually stop the bridge.
+Instead, the <code>*Messages*</code> buffer was immediately flooded with
+<code>[llminate] Process crashed</code> errors and the bridge kept
+restarting in an infinite loop. The only way to escape was to kill Emacs
+entirely.</p></li>
+<li><p><strong>Cause</strong>: A subtle ordering bug in how Emacs
+process sentinels interact with <code>delete-process</code>.</p>
+<p>The bridge has an auto-restart feature
+(<code>llminate-bridge-restart-on-crash</code>): when the process
+sentinel detects a crash, it schedules a restart via
+<code>run-with-timer</code>. The sentinel guards against restarting an
+intentional stop by checking
+<code>(not (eq llminate-bridge--state 'stopped))</code>.</p>
+<p>The <strong>original</strong> <code>llminate-bridge-stop</code>
+function was written as:</p>
+<pre class="elisp"><code>(defun llminate-bridge-stop ()
+  (when (process-live-p llminate-bridge--process)
+    (delete-process llminate-bridge--process))  ;; ← kills the process
+  (setq llminate-bridge--state &#39;stopped))       ;; ← sets state AFTER</code></pre>
+<p>The problem: in Emacs, <code>delete-process</code> calls the process
+sentinel <strong>synchronously</strong> — meaning the sentinel runs
+<em>inside</em> the <code>delete-process</code> call, before it returns.
+At that point, <code>llminate-bridge--state</code> was still
+<code>'streaming</code> (or <code>'idle</code>, etc.) because the
+<code>(setq ... 'stopped)</code> line hadn’t executed yet.</p>
+<p>So the sentinel saw: “process died, state is NOT
+<code>'stopped</code>, <code>restart-on-crash</code> is t → schedule
+restart.” The restart launches a new process, which then also gets
+stopped, triggering another sentinel, scheduling another restart —
+infinite loop.</p>
+<p>Additionally, the sentinel itself sets
+<code>(setq llminate-bridge--state 'stopped)</code> (line 210), which
+happens during the <code>delete-process</code> call. But then the
+original stop function’s <code>(setq ... 'stopped)</code> runs AFTER
+<code>delete-process</code> returns — by which time a timer has already
+been scheduled to restart.</p></li>
+<li><p><strong>Fix</strong>: Two changes:</p>
+<ol type="1">
+<li><p><strong>Set state to <code>'stopped</code> BEFORE calling
+<code>delete-process</code></strong> — so when the sentinel fires
+synchronously, it sees <code>'stopped</code> and skips the
+auto-restart:</p>
+<pre class="elisp"><code>(setq llminate-bridge--state &#39;stopped)       ;; ← FIRST
+(delete-process llminate-bridge--process)     ;; ← sentinel fires here, sees &#39;stopped</code></pre></li>
+<li><p><strong>Added explicit guard in the sentinel</strong>:
+<code>(not (eq llminate-bridge--state 'stopped))</code> — this was
+already present but was being defeated by the ordering bug. Now it works
+correctly because the state is set before the sentinel runs.</p></li>
+</ol></li>
+<li><p><strong>Key Insight</strong>: In Emacs,
+<code>delete-process</code> is not asynchronous — the sentinel runs
+inline, within the same call stack. Any state that the sentinel reads
+must be set <em>before</em> <code>delete-process</code> is called, not
+after.</p></li>
+</ul>
+<h3 id="tracing-output-pollutes-stdout-json-protocol">5. Tracing output
+pollutes stdout (JSON protocol)</h3>
+<ul>
+<li><strong>Symptom</strong>: ANSI-colored tracing lines mixed into
+JSON-lines, <code>JSON parse error</code></li>
+<li><strong>Cause</strong>: Fallback tracing subscriber in
+<code>init_tracing()</code> wrote to <code>io::stdout</code></li>
+<li><strong>Fix</strong>: (a) All console tracing layers now use
+<code>io::stderr</code> (b) Print-mode fallback installs no-op
+subscriber (c) <code>--debug</code> auto-enables stderr logging in print
+mode (d) Added <code>:stderr</code> buffer to
+<code>make-process</code></li>
+</ul>
+<h3 id="hook-arity-mismatch">6. Hook arity mismatch</h3>
+<ul>
+<li><strong>Symptom</strong>:
+<code>Wrong number of arguments: #[(_event) ...], 0</code></li>
+<li><strong>Cause</strong>: <code>llminate-mode--on-start</code> and
+<code>--on-ready</code> took 1 arg; hooks used <code>run-hooks</code> (0
+args)</li>
+<li><strong>Fix</strong>: Changed to 0-arg signatures</li>
+</ul>
+<h3 id="brokenpipe-crash-on-bridge-stop">7. BrokenPipe crash on bridge
+stop</h3>
+<ul>
+<li><strong>Symptom</strong>:
+<code>IO error: Broken pipe (os error 32)</code> with full stack
+trace</li>
+<li><strong>Cause</strong>: <code>emit_event</code> used <code>?</code>
+which propagated BrokenPipe as a fatal error</li>
+<li><strong>Fix</strong>: <code>emit_event</code> returns
+<code>Result&lt;bool&gt;</code> — <code>Ok(false)</code> on BrokenPipe;
+all callers in <code>run_keep_alive</code> and
+<code>process_keep_alive_turn</code> check the bool and exit
+cleanly</li>
+</ul>
+<h3 id="user-message-echoed-into-assistant-response">8. User message
+echoed into assistant response</h3>
+<ul>
+<li><strong>Symptom</strong>: “Hello” prefixed to assistant’s streaming
+text</li>
+<li><strong>Cause</strong>: Protocol echoes user message as
+<code>{"type":"Message","role":"user",...}</code>; bridge forwarded ALL
+messages to the response callback</li>
+<li><strong>Fix</strong>: <code>handle-message</code> now filters by
+role — only <code>"assistant"</code> messages are forwarded to the
+streaming callback</li>
+</ul>
+<h3 id="explain-region-prompt-not-sent">9. Explain-region prompt not
+sent</h3>
+<ul>
+<li><strong>Symptom</strong>: <code>C-c q e</code> shows “You:” and
+empty “Assistant:” but no response</li>
+<li><strong>Cause</strong>: (a) Race condition — prompts queued during
+<code>'starting</code> phase never drained because
+<code>handle-start</code> didn’t drain the queue (only
+<code>handle-ready</code> did). (b) <code>begin-assistant-turn</code>
+called eagerly before knowing if prompt would be sent or queued</li>
+<li><strong>Fix</strong>: (a) <code>handle-start</code> now drains the
+prompt queue (b) Assistant turn created lazily on first response chunk
+via <code>llminate-chat--ensure-assistant-turn</code></li>
+</ul>
+<hr />
+<h2 id="known-issues-open">Known Issues (Open)</h2>
+<h3
+id="streaming-display-performance-fixed-6-optimizations-applied">Streaming
+display performance — FIXED (6 optimizations applied)</h3>
+<p><strong>Symptom</strong>: Text appeared in the chat buffer noticeably
+slower than the actual token arrival rate from the API.</p>
+<p><strong>Root Cause</strong>: Multiple layers of per-token overhead
+compounded — overlay moves forcing redisplay, elisp JSON parsing,
+per-token buffer writes, inefficient line splitting, and debug buffer
+writes on every chunk.</p>
+<p><strong>Fixes Applied</strong> (all 6 implemented):</p>
+<ol type="1">
+<li><strong>Dropped the streaming overlay</strong> (llminate-chat.el):
+<ul>
+<li><strong>Before</strong>: <code>move-overlay</code> called on every
+token, forcing Emacs to re-render the entire overlay region (which grows
+with each token — O(n) per token, O(n²) total).</li>
+<li><strong>After</strong>: Uses a right-gravity marker
+(<code>llminate-chat--stream-insert-marker</code>). Text is inserted at
+the marker with <code>face</code> text property. No overlay means no
+per-insertion redisplay of the growing region. Streaming face is removed
+in one pass at <code>end-assistant-turn</code>.</li>
+</ul></li>
+<li><strong>Batched text insertion</strong> (llminate-chat.el):
+<ul>
+<li><strong>Before</strong>: Every streaming token triggered:
+<code>with-current-buffer</code> → <code>inhibit-read-only</code> →
+<code>goto-char</code> → <code>insert</code> → <code>move-overlay</code>
+→ potentially hundreds of buffer operations per second.</li>
+<li><strong>After</strong>: Tokens accumulate in
+<code>llminate-chat--stream-pending</code> (a string variable). A 30ms
+<code>run-at-time</code> timer
+(<code>llminate-chat--flush-stream</code>) flushes accumulated text into
+the buffer in a single insert. Reduces buffer operations from per-token
+to ~33/sec.</li>
+</ul></li>
+<li><strong>Native JSON parsing</strong> (llminate-bridge.el):
+<ul>
+<li><strong>Before</strong>: <code>json-read-from-string</code> — the
+pure-elisp JSON parser, called for every streaming token.</li>
+<li><strong>After</strong>: <code>json-parse-string</code> — the native
+C implementation (available since Emacs 27). 5-10x faster for small JSON
+objects. Same keyword-plist output format.</li>
+</ul></li>
+<li><strong>Optimized line buffer</strong> (llminate-bridge.el):
+<ul>
+<li><strong>Before</strong>: <code>(split-string buf "\n")</code>
+creates a list of ALL substrings → <code>(butlast lines)</code> copies
+the list minus last → <code>(car (last lines))</code> traverses the
+entire list. Three full-list operations per filter call.</li>
+<li><strong>After</strong>: Single-pass <code>string-search</code> loop.
+Only one <code>substring</code> call for the remaining tail. No list
+allocation at all.</li>
+</ul></li>
+<li><strong>Debug buffer writes made conditional</strong>
+(llminate-bridge.el):
+<ul>
+<li><strong>Before</strong>: Every process filter call did
+<code>with-current-buffer</code> + <code>goto-char</code> +
+<code>insert</code> into <code>*llminate-process*</code>, even in
+production.</li>
+<li><strong>After</strong>: Gated behind
+<code>llminate-bridge-debug-process-output</code> (defcustom, default
+nil). Zero overhead when disabled.</li>
+</ul></li>
+<li><strong>Scrolling already batched</strong> (from previous fix):
+<ul>
+<li>50ms <code>run-at-time</code> timer for auto-scroll, not per-token
+<code>with-selected-window</code> + <code>recenter</code>.</li>
+</ul></li>
+</ol>
+<p><strong>Status</strong>: Needs user testing to confirm improvement.
+If still slow, remaining options: - Set
+<code>process-adaptive-read-buffering</code> to coalesce reads at the OS
+level - Tune flush interval (currently 30ms — try 50ms for less
+overhead, or 16ms for smoother display) - Profile with
+<code>M-x profiler-start</code> to identify any remaining bottleneck</p>
+<hr />
+<h2 id="testing-status">Testing Status</h2>
+<p>Referencing <code>EMACS_INTEGRATION_TESTING.md</code> steps:</p>
+<table>
+<colgroup>
+<col style="width: 22%" />
+<col style="width: 48%" />
+<col style="width: 29%" />
+</colgroup>
+<thead>
+<tr>
+<th>Step</th>
+<th>Description</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Build Rust binaries</td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Test <code>--keep-alive</code> from terminal</td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Completion server health endpoint</td>
+<td>Not tested</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Elisp batch load (syntax check)</td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Interactive: load the mode</td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Chat UI (no subprocess)</td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Bridge connection + streaming</td>
+<td>PASS (6 perf fixes applied, needs retest)</td>
+</tr>
+<tr>
+<td>8</td>
+<td>EmacsCommand reverse channel</td>
+<td>Not tested</td>
+</tr>
+<tr>
+<td>9</td>
+<td>Tool approval</td>
+<td>Not tested</td>
+</tr>
+<tr>
+<td>10</td>
+<td>IDE layout</td>
+<td>Not tested</td>
+</tr>
+<tr>
+<td>11</td>
+<td>Code completion</td>
+<td>Not tested</td>
+</tr>
+<tr>
+<td>12</td>
+<td>Session persistence</td>
+<td>Not tested</td>
+</tr>
+<tr>
+<td>13</td>
+<td>Editor context (diagnostics, regions)</td>
+<td>Partial — explain-region works</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="keybinding-reference">Keybinding Reference</h2>
+<p>All under <code>C-c q</code> prefix:</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Command</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>C-c q q</code></td>
+<td>Toggle chat panel</td>
+<td>Working</td>
+</tr>
+<tr>
+<td><code>C-c q s</code></td>
+<td>Send prompt</td>
+<td>Working</td>
+</tr>
+<tr>
+<td><code>C-c q l</code></td>
+<td>Toggle IDE layout</td>
+<td>Not tested</td>
+</tr>
+<tr>
+<td><code>C-c q r</code></td>
+<td>Resume session</td>
+<td>Not tested</td>
+</tr>
+<tr>
+<td><code>C-c q c</code></td>
+<td>Command palette</td>
+<td>Not tested</td>
+</tr>
+<tr>
+<td><code>C-c q e</code></td>
+<td>Explain region</td>
+<td>Working (after fix #9)</td>
+</tr>
+<tr>
+<td><code>C-c q f</code></td>
+<td>Fix region</td>
+<td>Not tested</td>
+</tr>
+<tr>
+<td><code>C-c q d</code></td>
+<td>Send diagnostics</td>
+<td>Not tested</td>
+</tr>
+<tr>
+<td><code>C-c q .</code></td>
+<td>Trigger completion</td>
+<td>Not tested</td>
+</tr>
+<tr>
+<td><code>C-c q w</code></td>
+<td>List Emacs commands</td>
+<td>Not tested</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="configuration-required">Configuration Required</h2>
+<pre class="elisp"><code>;; In ~/.emacs or init.el:
+(add-to-list &#39;load-path &quot;~/.emacs.d/lisp/&quot;)
+(setq llminate-bridge-executable
+      &quot;~/Code/rust_projects/llminate/target/release/llminate&quot;)
+(require &#39;llminate-mode)
+(llminate-mode 1)</code></pre>
+<hr />
+<h2 id="next-priority">Next Priority</h2>
+<ol type="1">
+<li><strong>Test streaming performance</strong> — 6 optimizations
+applied, needs user verification</li>
+<li>Test remaining integration steps (8-13)</li>
+<li>Polish error handling and edge cases</li>
+</ol>
+
+<script>
+// Theme toggle functionality
+function toggleTheme() {
+  const body = document.body;
+  const button = document.querySelector('.theme-toggle');
+  const lightTheme = document.getElementById('light-theme');
+  const darkTheme = document.getElementById('dark-theme');
+  const lightCode = document.getElementById('light-code');
+  const darkCode = document.getElementById('dark-code');
+  
+  const isDark = body.getAttribute('data-theme') === 'dark';
+  
+  if (isDark) {
+    // Switch to light mode
+    body.removeAttribute('data-theme');
+    lightTheme.disabled = false;
+    darkTheme.disabled = true;
+    lightCode.disabled = false;
+    darkCode.disabled = true;
+    button.innerHTML = '🌙 Dark';
+    localStorage.setItem('theme', 'light');
+  } else {
+    // Switch to dark mode
+    body.setAttribute('data-theme', 'dark');
+    lightTheme.disabled = true;
+    darkTheme.disabled = false;
+    lightCode.disabled = true;
+    darkCode.disabled = false;
+    button.innerHTML = '☀️ Light';
+    localStorage.setItem('theme', 'dark');
+  }
+  
+  // Re-highlight code blocks with new theme
+  document.querySelectorAll('pre code').forEach((block) => {
+    hljs.highlightElement(block);
+  });
+}
+
+// Initialize theme from localStorage
+document.addEventListener('DOMContentLoaded', function() {
+  const savedTheme = localStorage.getItem('theme');
+  if (savedTheme === 'dark') {
+    toggleTheme();
+  }
+});
+
+// Initialize syntax highlighting
+hljs.highlightAll();
+
+// Auto-detect and highlight code blocks that pandoc might have missed
+document.querySelectorAll('pre code').forEach((block) => {
+  if (!block.classList.contains('hljs')) {
+    hljs.highlightElement(block);
+  }
+});
+</script>
+</body></html>
